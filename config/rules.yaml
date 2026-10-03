@@ -4,8 +4,10 @@ volume_exceeded:
   high_pct: 20            # выше этого — severity high
 
 price_increase:
-  tolerance_pct: 3        # допуск роста цены в акте относительно сметы/договора
-  high_pct: 15
+  tolerance_pct: 3        # допуск роста цены в акте относительно сметы
+  high_pct: 15            # сравниваем цену за единицу после нормализации (цена за «100 шт.» делится на 100)
+  # В договоре цен за единицу нет (только общая сумма), поэтому базой сравнения служит смета.
+  # Смета одна и в текущих ценах, пересчёт базисных цен в MVP не делаем.
 
 late_act:
   grace_days: 0           # допустимая задержка после срока договора
@@ -13,6 +15,12 @@ late_act:
 matching:
   fuzzy_threshold: 85     # score >= порога — совпадение fuzzy
   llm_lower_bound: 60     # между lower_bound и threshold — спорная пара (для LLM)
+  # Словарь синонимов и обязательные токены: config/synonyms.yaml
+
+# Светофор по позициям (marts.position_status), описание в docs/synthetic_spec.md.
+position_status:
+  green_under_tolerance_pct: 5   # факт не ниже плана более чем на 5% -> всё ещё зелёный
+  # Верхняя граница зелёного берётся из volume_exceeded.tolerance_pct.
 
 severity_levels: [low, medium, high]
 
