@@ -35,6 +35,10 @@ templates:
       drawing_ref: ["Ссылка на чертежи, спецификации"]
       formula_raw: ["Формула расчёта, расчёт объёмов работ и расхода материалов"]
     drop_duplicate_adjacent_columns: true   # заголовок и текст повторяются в соседней колонке
+    # Маркер материала: строка, где колонка чертежей (drawing_ref) начинается с одного из префиксов, это kind=material.
+    # Второй признак материала лежит в units.yaml (noun_units). Остальные строки ВОР: kind=work.
+    material_markers:
+      drawing_ref_prefixes: ["спец."]
     skip_row_keywords: ["итого", "всего", "составил", "утверждаю"]
     skip_row_patterns: ['^\s*\d(\s+\d){2,}\s*$']
     section_row_rule: empty_unit_and_quantity          # разделы ЗАГЛАВНЫМИ БУКВАМИ

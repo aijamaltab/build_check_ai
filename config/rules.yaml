@@ -16,6 +16,19 @@ matching:
   fuzzy_threshold: 85     # score >= порога — совпадение fuzzy
   llm_lower_bound: 60     # между lower_bound и threshold — спорная пара (для LLM)
   # Словарь синонимов и обязательные токены: config/synonyms.yaml
+  # Скорер: сначала token_set_ratio, при равенстве token_sort_ratio. WRatio (скорер rapidfuzz по умолчанию)
+  # не использовать: на строках работа/материал он даёт неверные пары.
+  scorers: [token_set_ratio, token_sort_ratio]
+  forbidden_scorers: [WRatio]
+  one_to_one: true        # внутри одного документа строка ВОР принимает только один ключ
+  # Ключ позиции и kind (docs/synthetic_spec.md §6): kind = material или work.
+  work_key_format: "{kind}:{name}|{unit}"
+  kind_unknown_default: work
+  kind_unknown_dq_check: "kind не определён"   # check_name в dq_checks
+
+# Режимы evaluate.py (docs/synthetic_spec.md §8). Результат на синтетике оптимистичен.
+evaluate:
+  modes: [no_synonyms, synonyms, synonyms_llm]
 
 # Светофор по позициям (marts.position_status), описание в docs/synthetic_spec.md.
 position_status:

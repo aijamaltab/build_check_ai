@@ -92,6 +92,8 @@ Python 3.11+, pandas, openpyxl, rapidfuzz, SQLite (через sqlite3 или SQL
 
 Правила наполнения `items`: `quantity` и `unit_price` хранятся **после нормализации** единиц (множитель нормы применён: «100 м2» × 0,06 → 6 м2, цена за «100 шт.» делится на 100). Договор попадает одной строкой: `work_name_raw = «Договор»`, `doc_date` = срок, `amount` = общая сумма.
 
+Ключ позиции: `work_key = kind + нормализованное название + единица`, где `kind` ∈ `work | material`; материалы (колонка чертежей «спец.» в ВОР или единица-существительное) не суммируются с работой. Правила: `docs/synthetic_spec.md`, §6.
+
 Marts-представления (views, не таблицы; `db.py` не меняем): `position_status(work_key, plan_qty, fact_qty, pct, status)` — светофор по позициям; `issues_view` — `issues` плюс `impact_som` (влияние на бюджет). Описание и формулы: `docs/synthetic_spec.md`, разделы 6 и 7.
 Предложения по изменению схемы (`quantity_raw`, `contractor`) лежат в `docs/schema_change_proposal.md` и не применены до согласия второй участницы.
 
