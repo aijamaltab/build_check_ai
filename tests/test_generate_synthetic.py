@@ -82,6 +82,7 @@ def read_positions(path: Path, template: str):
         price = r[col["unit_price"]] if "unit_price" in col else None
         out.append({
             "row": i + 1, "name": str(name), "unit": str(unit), "item_no": NAME_TO_ITEM[gen.normalize_name(str(name))],
+            "drawing_ref": r[col["drawing_ref"]] if "drawing_ref" in col else None,
             "qty": qty, "qty_norm": round(qty * factor, 6), "unit_canon": canon, "factor": factor,
             "price": price, "price_norm": None if price is None else price / factor,
         })
