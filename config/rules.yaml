@@ -1,0 +1,21 @@
+# Пороги проверок. Меняем здесь, а не в коде.
+volume_exceeded:
+  tolerance_pct: 5        # допуск превышения накопительного объёма по актам над ВОР
+  high_pct: 20            # выше этого — severity high
+
+price_increase:
+  tolerance_pct: 3        # допуск роста цены в акте относительно сметы/договора
+  high_pct: 15
+
+late_act:
+  grace_days: 0           # допустимая задержка после срока договора
+
+matching:
+  fuzzy_threshold: 85     # score >= порога — совпадение fuzzy
+  llm_lower_bound: 60     # между lower_bound и threshold — спорная пара (для LLM)
+
+severity_levels: [low, medium, high]
+
+data_quality:
+  max_unrecognized_share: 0.2   # файл с большей долей нераспознанных строк помечается
+  sum_tolerance_pct: 1          # допуск расхождения суммы строк и итога документа

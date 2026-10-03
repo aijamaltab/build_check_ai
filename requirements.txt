@@ -1,0 +1,6 @@
+pandas
+openpyxl
+rapidfuzz
+streamlit
+pyyaml
+pytest

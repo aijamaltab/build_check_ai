@@ -1,0 +1,50 @@
+# Маппинг колонок для каждого шаблона документа.
+# header_keywords — слова, по которым ищется строка заголовка (в файлах бывает шапка над таблицей).
+# columns: единое имя поля -> варианты названия колонки в файле.
+# skip_row_keywords — строки с этими словами пропускаем (итоги, подписи).
+templates:
+  vor_a:
+    doc_type: vor
+    header_keywords: ["наименование работ", "ед. изм", "объем"]
+    columns:
+      work_name_raw: ["Наименование работ"]
+      unit_raw: ["Ед. изм."]
+      quantity: ["Объем"]
+      unit_price: ["Цена за ед."]
+      amount: ["Сумма"]
+    skip_row_keywords: ["итого", "всего"]
+
+  vor_b:
+    doc_type: vor
+    header_keywords: ["вид работ", "единица", "количество"]
+    columns:
+      work_name_raw: ["Вид работ", "Описание"]
+      unit_raw: ["Единица"]
+      quantity: ["Количество"]
+      unit_price: ["Расценка"]
+      amount: ["Стоимость"]
+    skip_row_keywords: ["итого", "всего"]
+
+  act_a:
+    doc_type: act
+    header_keywords: ["наименование", "выполнено", "ед"]
+    columns:
+      work_name_raw: ["Наименование выполненных работ"]
+      unit_raw: ["Ед."]
+      quantity: ["Выполнено"]
+      unit_price: ["Цена"]
+      amount: ["Сумма"]
+    doc_date_cell: null   # дата акта берётся из шапки, ячейку уточним по генератору
+    skip_row_keywords: ["итого", "всего"]
+
+  act_b:
+    doc_type: act
+    header_keywords: ["работа", "кол-во", "тариф"]
+    columns:
+      work_name_raw: ["Работа"]
+      unit_raw: ["Изм."]
+      quantity: ["Кол-во факт"]
+      unit_price: ["Тариф"]
+      amount: ["Итого по строке"]
+    doc_date_cell: null
+    skip_row_keywords: ["итого по акту", "всего"]
