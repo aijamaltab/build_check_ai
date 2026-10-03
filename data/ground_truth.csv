@@ -1,0 +1,13 @@
+gt_id,issue_type,scenario,item_no,canonical_name,source_file,source_sheet,source_row,related_rows,expected,actual,expected_impact_som
+1,volume_exceeded,,10,Бетон М300 для фундаментов,act_3.xlsx,Акт,7,vor_1.xlsx:ВОР:19;estimate.xlsx:Смета:23;act_2.xlsx:Акт:10;act_3.xlsx:Акт:7,85,98,101400
+2,volume_exceeded,,12,Арматура А500 d12,act_2.xlsx,Акт,12,vor_1.xlsx:ВОР:22;estimate.xlsx:Смета:26;act_1.xlsx:Акт:23;act_2.xlsx:Акт:12,9.5,11.4,117800
+3,volume_exceeded,,26,Штукатурка стен цементно-песчаная,act_2.xlsx,Акт,27,vor_1.xlsx:ВОР:41;estimate.xlsx:Смета:46;act_1.xlsx:Акт:30;act_2.xlsx:Акт:27,3200,3560,111600
+4,volume_exceeded,,21,Кровля из профнастила,act_3.xlsx,Акт,10,vor_1.xlsx:ВОР:33;estimate.xlsx:Смета:39;act_2.xlsx:Акт:22;act_3.xlsx:Акт:10,1250,1390,109200
+5,volume_exceeded,duplicate_in_two_acts,31,Устройство цементной стяжки пола,act_3.xlsx,Акт,19,vor_1.xlsx:ВОР:46;estimate.xlsx:Смета:51;act_1.xlsx:Акт:31;act_2.xlsx:Акт:30;act_3.xlsx:Акт:19,1500,2000,210000
+6,price_increase,,23,Установка окон ПВХ двухкамерных,act_2.xlsx,Акт,24,vor_1.xlsx:ВОР:37;estimate.xlsx:Смета:42;act_2.xlsx:Акт:24;act_3.xlsx:Акт:13,6800,7900,121000
+7,price_increase,,16,Кладка кирпичных стен,act_1.xlsx,Акт,27,vor_1.xlsx:ВОР:27;estimate.xlsx:Смета:33;act_1.xlsx:Акт:27;act_2.xlsx:Акт:17,6200,6900,28000
+8,price_increase,,37,Установка светодиодных светильников,act_3.xlsx,Акт,25,vor_2.xlsx:ВОР:28;estimate.xlsx:Смета:60;act_2.xlsx:Акт:33;act_3.xlsx:Акт:25,1700,2100,48000
+9,missing_in_vor,,X1,Устройство отмостки вокруг здания,act_3.xlsx,Акт,33,act_3.xlsx:Акт:33,0,150,195000
+10,missing_in_vor,,X2,Монтаж системы видеонаблюдения,act_2.xlsx,Акт,35,act_2.xlsx:Акт:35,0,1,240000
+11,late_act,,,Акт №4,act_4.xlsx,Акт,2,act_4.xlsx:Акт:2,2025-09-30,2025-10-17,
+12,late_act,,,Акт №5,act_5.xlsx,Акт,2,act_5.xlsx:Акт:2,2025-09-30,2025-11-14,
