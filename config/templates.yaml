@@ -93,4 +93,31 @@ templates:
     doc_date_regex: 'от\s+(\d{2}\.\d{2}\.\d{4})'
     skip_row_keywords: ["итого по акту", "всего", "сдал", "принял"]
 
+  act_c:                                  # акт «по реальному образцу» (два образца, один акт, получены не с портала)
+    # Структура: docs/real_templates_findings.md, раздел 4. Генератор для этого шаблона пока не написан (docs/backlog.md).
+    doc_type: act
+    header_search:                        # строка заголовков ищется по словам, а не по номеру строки (в файлах это 4 и 5)
+      keywords: ["наименование", "единица измерения"]
+      by_row_number: false
+    columns:
+      seq: ["№"]
+      work_name_raw: ["Наименование работ"]
+      unit_raw: ["Единица измерения"]
+      quantity: ["Количество"]
+      unit_price: ["Цена за единицу"]
+      amount: ["Сумма"]
+      note: ["Примечание"]
+    column_match: starts_with             # в заголовках цены и суммы после названия идёт валюта
+    act_number_from_sheet_name: true      # в самом документе номера акта нет
+    date_cell_above_header: true          # дата отдельной ячейкой над шапкой, без подписи
+    object_name_row_without_number: true  # строка названия объекта (объединённая ячейка без номера): раздел, не позиция
+    currency_from_header_text:            # валюта указана только в тексте заголовка колонок
+      columns: [unit_price, amount]
+      pattern: '\b(USD|EUR|RUB|KGS)\b|сом'
+    ignore_unnamed_columns: true          # справа служебные колонки без заголовка (формулы распределения, проверки)
+    price_is_formula: true                # цена = сумма / количество, сумма первична (docs/synthetic_spec.md, §6)
+    percent_in_note: true                 # «100%» в примечании это процент выполнения, не комментарий
+    allow_repeated_names: true            # одно название в нескольких строках с разным количеством: не дубль
+    skip_row_keywords: ["итого", "всего"]
+
 # Каркас В (PDF из программы для смет, с колонкой «Шифр норматива» в ВОР) в MVP не делаем: это PDF, следующая версия.

@@ -2,20 +2,30 @@
 volume_exceeded:
   tolerance_pct: 5        # допуск превышения накопительного объёма по актам над ВОР
   high_pct: 20            # выше этого — severity high
+  # Для актов, где сумма первична (шаблон с price_is_formula), это дописывается в explanation:
+  explanation_if_price_is_formula: "количество могло быть выведено из суммы"
 
 price_increase:
   tolerance_pct: 3        # допуск роста цены в акте относительно сметы
   high_pct: 15            # сравниваем цену за единицу после нормализации (цена за «100 шт.» делится на 100)
   # В договоре цен за единицу нет (только общая сумма), поэтому базой сравнения служит смета.
   # Смета одна и в текущих ценах, пересчёт базисных цен в MVP не делаем.
+  # Цена по ключу = сумма / количество по всем строкам ключа в документе (средневзвешенная), а не цена строки.
+  price_basis: weighted_by_key
+  formula_price_note: "цена получена формулой сумма/количество"   # дописывается в explanation
 
 late_act:
   grace_days: 0           # допустимая задержка после срока договора
 
 matching:
-  fuzzy_threshold: 85     # score >= порога — совпадение fuzzy
-  llm_lower_bound: 60     # между lower_bound и threshold — спорная пара (для LLM)
-  # Словарь синонимов и обязательные токены: config/synonyms.yaml
+  fuzzy_threshold: 90     # score >= порога — «та же работа» без LLM (было 85: пары вида «Внутренний/Наружный ...» давали ~85)
+  llm_lower_bound: 60     # между lower_bound и threshold (60..90) — спорная пара (для LLM)
+  # Словарь синонимов и регулярные обязательные токены (диаметры, марки): config/synonyms.yaml
+  # Обязательные слова и текст в скобках: пара без LLM не сливается, если они различаются
+  # (docs/synthetic_spec.md, §6). Дополняет must_match_tokens из synonyms.yaml.
+  must_match_tokens:
+    exclusive_word_groups: [[внутренний, наружный]]   # у обеих строк должно быть одно и то же слово группы
+    bracket_text: must_equal                          # текст в скобках должен совпадать
   # Скорер: сначала token_set_ratio, при равенстве token_sort_ratio. WRatio (скорер rapidfuzz по умолчанию)
   # не использовать: на строках работа/материал он даёт неверные пары.
   scorers: [token_set_ratio, token_sort_ratio]
@@ -39,6 +49,19 @@ matching:
     issue_type: missing_in_vor
   summary_template: "Проверено {n} позиций, не распознано {m}, не сопоставлено {k}"   # одна строка в сводке интерфейса
   # «не распознано» = парсер не смог прочитать строку; «не сопоставлено» = прочитал, но пары в ВОР нет
+
+# Валюта документа (docs/synthetic_spec.md, §6): берётся из заголовка колонки цены; валюты не конвертируем.
+currency:
+  default: сом                                         # для синтетики, где валюта не указана
+  mismatch_policy: skip_price_and_amount_checks        # price_increase и impact_som не выполняются
+  mismatch_dq_check: "валюты не совпадают"             # check_name в dq_checks
+  mismatch_summary_label: "не сопоставимо"             # в сводке интерфейса
+  convert: false
+
+# Формулы в Excel (docs/synthetic_spec.md, §6).
+formulas:
+  read_mode: data_only                                 # openpyxl data_only=True: кэшированные значения
+  missing_value_dq_check: "формула без значения"       # если значения нет (None), строка не считается молча
 
 # Режимы evaluate.py (docs/synthetic_spec.md §8). Результат на синтетике оптимистичен.
 evaluate:
