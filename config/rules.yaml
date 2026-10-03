@@ -24,11 +24,28 @@ matching:
   # Ключ позиции и kind (docs/synthetic_spec.md §6): kind = material или work.
   work_key_format: "{kind}:{name}|{unit}"
   kind_unknown_default: work
-  kind_unknown_dq_check: "kind не определён"   # check_name в dq_checks
+  kind_unknown_dq_check: "kind не определён"   # check_name в dq_checks; это диагностика, не issue
+
+  # Порядок сопоставления строки документа с ВОР (docs/synthetic_spec.md §6, «Строка без пары»):
+  # synonyms -> rapidfuzz (порог fuzzy_threshold) -> LLM только для зоны llm_lower_bound..fuzzy_threshold.
+  pipeline: [synonyms, rapidfuzz, llm]
+  llm_zone: [llm_lower_bound, fuzzy_threshold]      # score >= нижней и < верхней границы (имена параметров выше)
+  skip_llm_in_modes: [rules_only]                   # в этих режимах шаг llm пропускается
+  rules_only_explanation: "ИИ-режим недоступен, шаг LLM пропущен"   # дописывается в explanation расхождения
+  # Нет пары после всех шагов: строка «не сопоставлена». Для строки акта создаётся issue, для сметы нет.
+  unmatched_status: "не сопоставлена"
+  unmatched_issue:
+    document: act
+    issue_type: missing_in_vor
+  summary_template: "проверено {n} позиций, не сопоставлено {m}"   # одна строка в сводке интерфейса
 
 # Режимы evaluate.py (docs/synthetic_spec.md §8). Результат на синтетике оптимистичен.
 evaluate:
   modes: [no_synonyms, synonyms, synonyms_llm]
+  metrics: [recall, precision, traps, false_unmatched]
+  # false_unmatched: строки без пары, для которых в ground_truth нет missing_in_vor, по каждому режиму,
+  # со списком «файл:лист:строка» (docs/synthetic_spec.md §8).
+  false_unmatched_list_fields: [file, sheet, row]
 
 # Светофор по позициям (marts.position_status), описание в docs/synthetic_spec.md.
 position_status:
