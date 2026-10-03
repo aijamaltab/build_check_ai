@@ -21,14 +21,16 @@ def test_rules_have_matching_order_params():
     assert m["rules_only_explanation"]
     assert m["unmatched_status"] == "не сопоставлена"
     assert m["unmatched_issue"] == {"document": "act", "issue_type": "missing_in_vor"}
-    assert m["summary_template"].format(n=1, m=2, k=3) == "Проверено 1 позиций, не распознано 2, не сопоставлено 3"
+    assert m["summary_template"].format(n=1, m=2, k=3, l=4) == (
+        "Проверено 1 позиций, не распознано 2, не сопоставлено 3, не сопоставимо 4")
     assert m["kind_unknown_dq_check"] == "kind не определён"
 
 
 def test_evaluate_modes_and_metrics():
     ev = RULES["evaluate"]
     assert ev["modes"] == ["no_synonyms", "synonyms", "synonyms_llm"]
-    assert "false_unmatched" in ev["metrics"]
+    assert ev["thresholds"] == [85, 90]
+    assert "false_unmatched" in ev["metrics"] and "false_merges" in ev["metrics"]
     assert ev["false_unmatched_list_fields"] == ["file", "sheet", "row"]
 
 
@@ -62,14 +64,15 @@ def test_every_synonym_entry_has_source_comment():
 
 def test_spec_describes_unmatched_rows_and_metric():
     for phrase in ("### Строка без пары", "«не сопоставлена»", "missing_in_vor",
-                   "Проверено N позиций, не распознано M, не сопоставлено K", "ложные не сопоставленные",
+                   "Проверено N позиций, не распознано M, не сопоставлено K, не сопоставимо L", "ложные не сопоставленные",
                    "### Правило пополнения `synonyms.yaml`"):
         assert phrase in SPEC, phrase
 
 
 def test_summary_line_and_backlog_in_docs():
     claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "Проверено N позиций, не распознано M, не сопоставлено K" in claude
+    assert "Проверено N позиций, не распознано M, не сопоставлено K, не сопоставимо L" in claude
+    assert "два образца реального акта, не с портала, один акт, выводов про все акты нет" in claude
     backlog = (ROOT / "docs" / "backlog.md").read_text(encoding="utf-8")
     assert "Работа есть в смете, но нет в ВОР" in backlog
 
@@ -77,7 +80,7 @@ def test_summary_line_and_backlog_in_docs():
 # ---------- образцы реального акта: шаблон act_c, порог 90, валюта, цена по ключу ----------
 TEMPLATES = yaml.safe_load((ROOT / "config" / "templates.yaml").read_text(encoding="utf-8"))["templates"]
 
-ACT_C_KEYS = ["header_search", "date_cell_above_header", "object_name_row_without_number",
+ACT_C_KEYS = ["header_keywords", "header_by_row_number", "date_cell_above_header", "object_name_row_without_number",
               "currency_from_header_text", "ignore_unnamed_columns", "price_is_formula",
               "percent_in_note", "allow_repeated_names"]
 
@@ -87,8 +90,11 @@ def test_act_c_template_has_required_keys():
     assert act_c["doc_type"] == "act"
     for key in ACT_C_KEYS:
         assert key in act_c, key
-    assert act_c["header_search"]["by_row_number"] is False
-    assert {"наименование", "единица измерения"} <= set(act_c["header_search"]["keywords"])
+    assert "header_search" not in act_c
+    assert act_c["header_by_row_number"] is False
+    assert isinstance(act_c["header_keywords"], list)          # тот же формат, что у остальных шаблонов
+    assert {"наименование", "единица измерения"} <= set(act_c["header_keywords"])
+    assert all(isinstance(t["header_keywords"], list) for t in TEMPLATES.values() if "header_keywords" in t)
     assert act_c["date_cell_above_header"] is True and act_c["price_is_formula"] is True
     assert re.search(act_c["currency_from_header_text"]["pattern"], "Цена за единицу (USD)")
 
@@ -96,8 +102,9 @@ def test_act_c_template_has_required_keys():
 def test_rules_threshold_90_must_match_tokens_currency_and_formulas():
     m = RULES["matching"]
     assert m["fuzzy_threshold"] == 90 and m["llm_lower_bound"] == 60
-    assert m["must_match_tokens"]["exclusive_word_groups"] == [["внутренний", "наружный"]]
+    assert m["must_match_tokens"]["exclusive_word_groups"] == [["внутренн", "наружн"]]
     assert m["must_match_tokens"]["bracket_text"] == "must_equal"
+    assert len(m["must_match_tokens"]["patterns"]) == 4
     assert RULES["price_increase"]["price_basis"] == "weighted_by_key"
     assert RULES["price_increase"]["formula_price_note"]
     assert RULES["volume_exceeded"]["explanation_if_price_is_formula"]
@@ -108,9 +115,18 @@ def test_rules_threshold_90_must_match_tokens_currency_and_formulas():
     assert f["read_mode"] == "data_only" and f["missing_value_dq_check"] == "формула без значения"
 
 
+def test_must_match_tokens_single_source_is_rules_yaml():
+    synonyms = yaml.safe_load(SYNONYMS_TEXT)
+    assert "must_match_tokens" not in synonyms
+    assert "config/rules.yaml, matching.must_match_tokens" in SYNONYMS_TEXT.replace("\n# ", " ")
+
+
 def must_match_ok(a: str, b: str) -> bool:
-    """Прототип правила matching.must_match_tokens из rules.yaml (слова группы и текст в скобках)."""
+    """Прототип правила matching.must_match_tokens из rules.yaml (токены, слова группы, текст в скобках)."""
     cfg = RULES["matching"]["must_match_tokens"]
+    for pattern in cfg["patterns"]:
+        if re.findall(pattern, a.lower()) != re.findall(pattern, b.lower()):
+            return False
     for group in cfg["exclusive_word_groups"]:
         wa = {w for w in group if w in a.lower()}
         wb = {w for w in group if w in b.lower()}
@@ -124,19 +140,25 @@ def must_match_ok(a: str, b: str) -> bool:
 
 
 def test_similar_names_with_different_word_are_not_one_work():
-    """Тест-кейс matching: пара отличается одним словом, token_set_ratio около 85, это разные работы."""
-    a, b = "Внутренний желоб (закрывающий настил)", "Наружный желоб (закрывающий настил)"
+    """Тест-кейс matching (нейтральная вымышленная пара): отличается одним словом, token_set_ratio около 85."""
+    a, b = "Внутренняя перегородка (гипсокартон)", "Наружная перегородка (гипсокартон)"
     raw = fuzz.token_set_ratio(a, b)
     lowered = fuzz.token_set_ratio(a.lower(), b.lower())
     m = RULES["matching"]
-    assert int(raw) == 85                                   # 85,2 на исходных строках
+    assert int(raw) == 84                                   # 84,7 на исходных строках
+    assert int(lowered) == 85                               # 85,7 после lower(), как в нашем пайплайне
     assert m["llm_lower_bound"] <= raw < m["fuzzy_threshold"]
-    assert m["llm_lower_bound"] <= lowered < m["fuzzy_threshold"]   # 86,1 после lower()
+    assert m["llm_lower_bound"] <= lowered < m["fuzzy_threshold"]
     assert not must_match_ok(a, b) and must_match_ok(a, a)
-    # без LLM пара не сливается: ни по порогу, ни по обязательным токенам
-    assert not (raw >= m["fuzzy_threshold"] and must_match_ok(a, b))
-    # со старым порогом 85 пара слилась бы
-    assert raw >= 85
+    # без LLM пара не сливается: ни по порогу 90, ни по обязательным токенам
+    assert not (lowered >= m["fuzzy_threshold"] and must_match_ok(a, b))
+    # при пороге 85 по оценке она слилась бы (это то, что сравнит evaluate.py)
+    assert lowered >= min(RULES["evaluate"]["thresholds"])
+
+
+def test_must_match_patterns_keep_diameters_apart():
+    assert not must_match_ok("Арматура А500 d12", "Арматура А240 d8")
+    assert must_match_ok("Арматура А500 d12", "Арматура А500 d12")
 
 
 def test_bracket_text_must_equal():
@@ -147,7 +169,9 @@ def test_bracket_text_must_equal():
 def test_spec_has_currency_weighted_price_and_formula_rules():
     for phrase in ("средневзвешенная цена", "валюты не совпадают", "не сопоставимо", "Валюты не конвертируем",
                    "формула без значения", "data_only=True", "количество могло быть выведено из суммы",
-                   "### Валюта", "### Цена по ключу и формулы", "`fuzzy_threshold` равен **90**"):
+                   "### Валюта", "### Цена по ключу и формулы", "`fuzzy_threshold` равен **90**",
+                   "**единственный источник**", "`fuzzy_threshold` 85 и 90", "ложных склеек",
+                   "порог выбирается на синтетике", "Внутренняя перегородка (гипсокартон)"):
         assert phrase in SPEC, phrase
 
 
