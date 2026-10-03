@@ -18,16 +18,19 @@ late_act:
   grace_days: 0           # допустимая задержка после срока договора
 
 matching:
-  fuzzy_threshold: 90     # score >= порога — «та же работа» без LLM (было 85: пары вида «Внутренний/Наружный ...» давали ~85)
+  fuzzy_threshold: 90     # по умолчанию; score >= порога — «та же работа» без LLM. evaluate.py прогоняет 85 и 90 (evaluate.thresholds), выбор по цифрам
   llm_lower_bound: 60     # между lower_bound и threshold (60..90) — спорная пара (для LLM)
   # Словарь синонимов и регулярные обязательные токены (диаметры, марки): config/synonyms.yaml
-  # Обязательные слова и текст в скобках: пара без LLM не сливается, если они различаются
-  # (docs/synthetic_spec.md, §6). Дополняет must_match_tokens из synonyms.yaml.
+  # Обязательные токены: ЕДИНСТВЕННЫЙ источник (в synonyms.yaml только комментарий-ссылка).
+  # Пара без LLM не сливается, если эти токены у строк различаются (docs/synthetic_spec.md, §6).
   must_match_tokens:
-    exclusive_word_groups: [[внутренний, наружный]]   # у обеих строк должно быть одно и то же слово группы
+    patterns:                                         # регулярные токены; откуда: источник не подтверждён (вернуться до 07.10)
+      - 'd\d+'                                        # диаметр
+      - 'а\d{3}'                                      # класс арматуры
+      - 'в\d{1,2}(?:\.\d)?'                           # класс бетона
+      - 'м\d{3}'                                      # марка бетона, если не удалось привести к классу
+    exclusive_word_groups: [[внутренн, наружн]]       # основы слов (род и падеж не важны): у обеих строк одно и то же слово группы
     bracket_text: must_equal                          # текст в скобках должен совпадать
-  # Скорер: сначала token_set_ratio, при равенстве token_sort_ratio. WRatio (скорер rapidfuzz по умолчанию)
-  # не использовать: на строках работа/материал он даёт неверные пары.
   scorers: [token_set_ratio, token_sort_ratio]
   forbidden_scorers: [WRatio]
   one_to_one: true        # внутри одного документа строка ВОР принимает только один ключ
@@ -47,8 +50,9 @@ matching:
   unmatched_issue:
     document: act
     issue_type: missing_in_vor
-  summary_template: "Проверено {n} позиций, не распознано {m}, не сопоставлено {k}"   # одна строка в сводке интерфейса
-  # «не распознано» = парсер не смог прочитать строку; «не сопоставлено» = прочитал, но пары в ВОР нет
+  summary_template: "Проверено {n} позиций, не распознано {m}, не сопоставлено {k}, не сопоставимо {l}"   # одна строка в сводке интерфейса
+  # «не распознано» = парсер не смог прочитать строку; «не сопоставлено» = прочитал, но пары в ВОР нет;
+  # «не сопоставимо» = валюты документов не совпали, проверки цены и суммы не выполнены
 
 # Валюта документа (docs/synthetic_spec.md, §6): берётся из заголовка колонки цены; валюты не конвертируем.
 currency:
@@ -66,7 +70,8 @@ formulas:
 # Режимы evaluate.py (docs/synthetic_spec.md §8). Результат на синтетике оптимистичен.
 evaluate:
   modes: [no_synonyms, synonyms, synonyms_llm]
-  metrics: [recall, precision, traps, false_unmatched]
+  thresholds: [85, 90]       # fuzzy_threshold, который прогоняет evaluate.py; выбор по цифрам (ложные склейки, ложные «не сопоставлено»)
+  metrics: [recall, precision, traps, false_unmatched, false_merges]
   # false_unmatched: строки без пары, для которых в ground_truth нет missing_in_vor, по каждому режиму,
   # со списком «файл:лист:строка» (docs/synthetic_spec.md §8).
   false_unmatched_list_fields: [file, sheet, row]
