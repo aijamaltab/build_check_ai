@@ -11,7 +11,7 @@ from tests.cache_guard import REAL_CACHE
 from ui.data import (AI_NOT_FOUND_NOTE, LOW_CONFIDENCE_NOTE, SEVERITY_COLOR, STATUS_COLORS, build_cards, cards_frame, chart_frames,
                      connect_readonly, contrast_ratio, filter_issues, fmt_conf, fmt_date, fmt_num, fmt_pct, headline_metrics,
                      impact_split, load_results, pick_examples, positions_view, quality_compare, quality_metrics, sort_issues,
-                     traffic_legend, traffic_segments)
+                     traffic_legend, traffic_segments, compact_rows, false_issue_ids)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "data" / "synthetic"
@@ -219,7 +219,8 @@ def test_card_with_empty_impact_shows_reason_and_unknown_estimate_price():
                             "delta_pct": None, "severity": "high", "source_file": "a.xlsx", "source_sheet": "Акт", "source_row": 5,
                             "explanation": "Возможное расхождение. Требует проверки.", "impact_som": None, "impact_note": "нет цены в смете",
                             "confidence": "high", "unit": "м2", "expected_text": None, "actual_text": None,
-                            "sources": ["Акт · a.xlsx · лист «Акт» · строка 5"], "ai_matched": False, "ai_pairs": [], "ai_none": None}])
+                            "sources": ["Акт · a.xlsx · лист «Акт» · строка 5"], "ai_matched": False, "ai_pairs": [], "ai_none": None,
+                            "sides": {"left": {}, "right": {}}}])
     positions = pd.DataFrame([{"work_key": "work:x|m2", "name": "Штукатурка"}])
     card = build_cards(issues, positions)[0]
     assert card["title"] == "Штукатурка" and card["impact_text"] == "— (нет цены в смете)" and card["impact_value"] is None
@@ -317,3 +318,52 @@ def test_quality_metrics_without_and_with_ai(llm_db, rules_db):
 
 def test_fmt_conf():
     assert fmt_conf(1.0) == "1,00" and fmt_conf(0.95) == "0,95" and fmt_conf(0.7) == "0,70" and fmt_conf(None) == "—"
+
+
+# ---------- «как написано»: ВОР и акт рядом ----------
+def test_sides_show_vor_and_act_names_and_numbers_as_written(llm_db):
+    r = load_results(llm_db)
+    cards = build_cards(sort_issues(r["issues"]), r["positions"])
+    rebar = next(c for c in cards if c["title"] == "Арматура А500 d12")["sides"]
+    assert rebar["left"] == {"label": "В ВОР", "name": "Арматура А500 d12", "value": "9,5 т", "where": "vor_1.xlsx · строка 22",
+                             "names_differ": True}
+    assert [(x["name"], x["value"]) for x in rebar["right"]["rows"]] == [("Арм. А500 Ø12", "5 т"), ("Арм. А500 Ø12", "6,4 т")]
+    assert rebar["right"]["label"] == "В актах" and rebar["right"]["total"] == "Всего 11,4 т"
+    price = next(c for c in cards if c["type"] == "price_increase" and "окон" in c["title"].lower())["sides"]
+    assert price["left"]["label"] == "В смете" and price["left"]["value"] == "6 800 сом за м2" and price["left"]["name"] == "Установка окон ПВХ двухкамерных"
+    assert price["right"]["rows"][0]["name"] == "Монтаж оконных блоков ПВХ" and price["right"]["rows"][0]["value"] == "7 900 сом за м2"
+    missing = next(c for c in cards if c["type"] == "missing_in_vor")["sides"]
+    assert missing["left"]["name"] is None and missing["left"]["value"] == "такой позиции не найдено"
+    assert missing["right"]["rows"][0]["value"] == "1 компл." and missing["left"]["names_differ"] is False
+    late = next(c for c in cards if c["type"] == "late_act")["sides"]
+    assert late["left"]["label"] == "Договор" and late["left"]["value"] == "30.09.2025"
+    assert late["right"]["rows"][0]["value"] == "датирован 17.10.2025" and late["right"]["total"] == "Позже срока на 17 дн."
+
+
+def test_sides_never_contain_marker_text_and_every_card_has_both_sides(llm_db):
+    r = load_results(llm_db)
+    for c in build_cards(sort_issues(r["issues"]), r["positions"]):
+        left, right = c["sides"]["left"], c["sides"]["right"]
+        assert left["label"] and left["value"] and right["label"] and right["rows"]
+        assert "/прим/" not in str(left) + str(right)
+
+
+# ---------- сравнение режимов по эталону для страницы обоснования ----------
+def test_false_issue_ids_and_compact_rows(llm_db, rules_db):
+    rules, llm = load_results(rules_db), load_results(llm_db)
+    false_rules, false_llm = false_issue_ids(rules["issues"]), false_issue_ids(llm["issues"])
+    assert len(false_rules) == 10 and len(false_llm) == 1
+    table = compact_rows(rules["issues"], rules["positions"], false_rules)
+    assert list(table.columns) == ["Тип", "Работа", "Влияние", "По эталону"] and len(table) == 18
+    assert table["По эталону"].str.startswith("ложное").sum() == 10 and (table["По эталону"] == "есть в эталоне").sum() == 8
+    wrong = compact_rows(llm["issues"], llm["positions"], false_llm)
+    assert wrong[wrong["По эталону"].str.startswith("ложное")]["Работа"].tolist() == ["Разборка пола"]
+
+
+def test_ai_pairs_all_are_unique_and_sorted_acts_first(llm_db):
+    pairs = load_results(llm_db)["ai_pairs_all"]
+    assert len(pairs) >= 20
+    assert len({(p["doc"], p["vor"]) for p in pairs}) == len(pairs)
+    kinds = [p["doc_type"] for p in pairs]
+    assert kinds == sorted(kinds, key=lambda k: k != "act")
+    assert all(p["doc"] and p["vor"] and 0 <= p["confidence"] <= 1 and p["reason"] for p in pairs)

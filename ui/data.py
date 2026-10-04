@@ -61,8 +61,8 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             summary["banner"] = row[1]
         issues = pd.read_sql_query("SELECT * FROM issues_view WHERE project_id = ?", conn, params=(project_id,))
         positions = pd.read_sql_query("SELECT * FROM position_status WHERE project_id = ?", conn, params=(project_id,))
-        items = pd.read_sql_query("SELECT doc_type, work_key, source_file, source_sheet, source_row FROM items WHERE project_id = ?",
-                                  conn, params=(project_id,))
+        items = pd.read_sql_query("SELECT doc_type, work_key, work_name_raw, quantity, unit_price, source_file, source_sheet, source_row "
+                                  "FROM items WHERE project_id = ?", conn, params=(project_id,))
         ai_keys = {r[0] for r in conn.execute(
             "SELECT DISTINCT m.work_key FROM matches m JOIN staging_matches_ext e ON e.match_id = m.match_id "
             "JOIN items i ON i.item_id = m.item_id WHERE i.project_id = ? AND e.stage IN ('llm', 'llm_row')", (project_id,))}
@@ -85,8 +85,10 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "GROUP BY d.doc_id ORDER BY d.doc_id", conn, params=(*diagnostic, project_id))
     finally:
         conn.close()
-    issues = attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, cfg["synonyms"].get("strip_markers", []))
-    return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples)}
+    markers = cfg["synonyms"].get("strip_markers", [])
+    issues = attach_sides(attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, markers), items, markers)
+    return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples),
+            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers)}
 
 
 # ---------- форматирование ----------
@@ -161,6 +163,52 @@ def attach_context(issues: pd.DataFrame, items: pd.DataFrame, ai_keys: set) -> p
         ai.append(r["issue_type"] in ("volume_exceeded", "price_increase") and r["work_key"] in ai_keys)
     issues["sources"] = sources
     issues["ai_matched"] = ai
+    return issues
+
+
+# ---------- «как написано»: что в ВОР и что в акте ----------
+def attach_sides(issues: pd.DataFrame, items: pd.DataFrame, markers) -> pd.DataFrame:
+    """Колонка sides: {left, right} для карточки «в ВОР и в акте, как написано».
+
+    left: документ, с которым сравнивали (ВОР, смета или договор): название как в файле, значение. right: строки акта: название как в файле,
+    значение, где лежит. Названия и числа берутся из items (название строки как записано, количество и цена после приведения единиц)."""
+    sides = []
+    for _, r in issues.iterrows():
+        unit = r["unit"] or ""
+        key = r["work_key"]
+        same = items[items["work_key"] == key] if key else items.iloc[0:0]
+        own = items[(items["source_file"] == r["source_file"]) & (items["source_sheet"] == r["source_sheet"])
+                    & (items["source_row"] == r["source_row"]) & (items["doc_type"] == "act")]
+
+        def row_of(part, value):
+            return [{"name": _clean(x.work_name_raw, markers), "value": value(x), "where": f"{x.source_file} · строка {int(x.source_row)}"}
+                    for x in part.itertuples()]
+
+        kind = r["issue_type"]
+        if kind == "volume_exceeded":
+            vor = row_of(same[same["doc_type"] == "vor"].sort_values(["source_file", "source_row"]).head(1), lambda x: f"{fmt_num(r['expected'])} {unit}")
+            acts = row_of(same[same["doc_type"] == "act"].sort_values(["source_file", "source_row"]), lambda x: f"{fmt_num(x.quantity)} {unit}")
+            left = {"label": "В ВОР", "name": vor[0]["name"] if vor else None, "value": f"{fmt_num(r['expected'])} {unit}",
+                    "where": vor[0]["where"] if vor else ""}
+            right = {"label": "В актах", "rows": acts, "total": f"Всего {fmt_num(r['actual'])} {unit}"}
+        elif kind == "price_increase":
+            est = row_of(same[same["doc_type"] == "estimate"].head(1), lambda x: "")
+            price = "цены в смете нет" if pd.isna(r["expected"]) else f"{fmt_num(r['expected'])} сом за {unit}"
+            left = {"label": "В смете", "name": est[0]["name"] if est else None, "value": price, "where": est[0]["where"] if est else ""}
+            right = {"label": "В акте", "rows": row_of(own, lambda x: f"{fmt_num(r['actual'])} сом за {unit}"), "total": ""}
+        elif kind == "missing_in_vor":
+            left = {"label": "В ВОР", "name": None, "value": "такой позиции не найдено", "where": ""}
+            right = {"label": "В акте", "rows": row_of(own, lambda x: f"{fmt_num(x.quantity)} {unit}"), "total": ""}
+        else:
+            left = {"label": "Договор", "name": "Срок выполнения работ", "value": fmt_date(r["expected_text"]), "where": ""}
+            right = {"label": "Акт", "rows": [{"name": f"Акт {r['source_file']}", "value": f"датирован {fmt_date(r['actual_text'])}",
+                                               "where": f"{r['source_file']} · строка {int(r['source_row'])}"}],
+                     "total": f"Позже срока на {fmt_num(r['actual'])} дн."}
+        names = [x["name"].lower() for x in right["rows"]]
+        left["names_differ"] = bool(left["name"] and kind in ("volume_exceeded", "price_increase") and any(n != left["name"].lower() for n in names))
+        sides.append({"left": left, "right": right})
+    issues = issues.copy()
+    issues["sides"] = sides
     return issues
 
 
@@ -264,6 +312,39 @@ def pick_examples(examples: list, n: int = 6) -> list:
             chosen.append(e)
             seen.add(e["doc"].lower())
     return chosen[:n]
+
+
+def ai_pair_list(pair_rows: pd.DataFrame, markers) -> list:
+    """Все пары названий, которые сопоставил ИИ (без повторов): [{doc_type, doc, vor, confidence, reason, stage}], сначала акты."""
+    seen, out = set(), []
+    for r in pair_rows.itertuples():
+        pair = {"doc_type": r.doc_type, "doc": _clean(r.doc_name, markers), "vor": _clean(r.vor_name, markers),
+                "confidence": None if pd.isna(r.confidence) else float(r.confidence), "reason": r.reason or "", "stage": r.stage}
+        if (pair["doc"], pair["vor"]) not in seen:
+            seen.add((pair["doc"], pair["vor"]))
+            out.append(pair)
+    return sorted(out, key=lambda p: (p["doc_type"] != "act", p["doc"].lower()))
+
+
+def false_issue_ids(issues: pd.DataFrame) -> set:
+    """issue_id расхождений, которых нет в эталоне синтетики (ложные): scripts/evaluate.py по data/ground_truth.csv."""
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import evaluate as ev
+    result = ev.evaluate_issues(issues.to_dict("records"), ev.read_csv(ROOT / "data" / "ground_truth.csv"), ev.read_csv(ROOT / "data" / "traps.csv"))
+    return {int(i["issue_id"]) for i in result["false_issues"]}
+
+
+def compact_rows(issues: pd.DataFrame, positions: pd.DataFrame, false_ids: set) -> pd.DataFrame:
+    """Короткая таблица расхождений одного режима для страницы обоснования: тип, работа, влияние, совпало ли с эталоном."""
+    titles = _titles(issues, positions)
+    rows = []
+    for idx, r in issues.iterrows():
+        impact = EMPTY if pd.isna(r["impact_som"]) else f"{fmt_num(r['impact_som'])} сом"
+        rows.append({"Тип": TYPE_RU[r["issue_type"]], "Работа": titles[idx], "Влияние": impact,
+                     "По эталону": "ложное: в эталоне нет" if int(r["issue_id"]) in false_ids else "есть в эталоне"})
+    return pd.DataFrame(rows, columns=["Тип", "Работа", "Влияние", "По эталону"])
 
 
 def quality_metrics(issues: pd.DataFrame) -> dict:
@@ -423,7 +504,7 @@ def build_cards(issues: pd.DataFrame, positions: pd.DataFrame) -> list:
                       "severity": r["severity"], "severity_label": SEVERITY_RU[r["severity"]], "phrase": issue_phrase(r),
                       "impact_text": impact, "impact_value": None if pd.isna(r["impact_som"]) else float(r["impact_som"]),
                       "sources": list(r["sources"]), "ai": bool(r["ai_matched"]), "note": note,
-                      "ai_pairs": list(r["ai_pairs"]), "ai_none": r["ai_none"]})
+                      "ai_pairs": list(r["ai_pairs"]), "ai_none": r["ai_none"], "sides": r["sides"]})
     return cards
 
 

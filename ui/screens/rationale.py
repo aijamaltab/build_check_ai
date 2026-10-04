@@ -1,0 +1,67 @@
+"""Страница «Обоснование»: что даёт ИИ. Цифры берутся из двух прогонов демо (без ИИ и с ИИ) и эталона синтетики."""
+import streamlit as st
+
+from ui import components as ui
+from ui.data import compact_rows, false_issue_ids, fmt_conf, quality_compare, quality_metrics
+from ui.loader import build_demo
+
+QUALITY_NOTE = "Синтетические данные, оценка ориентировочная."
+LEAD = ("Одну и ту же работу в ведомости, смете и акте записывают по-разному. Правила сопоставляют очевидное, но не всё. "
+        "Ниже видно, что меняется, когда спорные названия разбирает ИИ, а числа по-прежнему считает и проверяет код.")
+
+
+def render() -> None:
+    ui.render('<div class="hero"><div class="hero-title">Зачем здесь ИИ</div>'
+              f'<div class="hero-lead">{LEAD}</div></div>')
+    try:
+        with_ai, without_ai = build_demo("llm"), build_demo("rules_only")
+    except Exception:  # noqa: BLE001
+        st.error("Не удалось собрать результат из демо-проекта. Обновите страницу.")
+        return
+    if with_ai["summary"]["mode"] != "llm":
+        ui.render(ui.banner_html(with_ai["summary"]["banner"] or "ИИ-режим недоступен, сравнение невозможно"))
+        return
+
+    examples = with_ai["ai_examples"]
+    pair = next((e for e in examples if e["kind"] == "pair_accepted"), None)
+    if pair:
+        ui.render(ui.claim_html(f"В ВОР: «{pair['vor']}». В акте: «{pair['doc']}». Это одна работа, но названия разные: правила по схожести "
+                                f"сомневаются, ИИ уверенно подтверждает."))
+
+    ui.render(ui.section_html("Без ИИ и с ИИ", "Те же документы, два режима. Эталон: заложенные расхождения синтетического проекта."))
+    rows = quality_compare(without_ai["issues"], with_ai["issues"])
+    ui.render(ui.compare_html(rows, QUALITY_NOTE))
+    a, b = quality_metrics(without_ai["issues"]), quality_metrics(with_ai["issues"])
+    ui.render(ui.claim_html(f"Без ИИ найдено {a['found']} из {a['gt_total']} заложенных расхождений и {a['false']} ложных. "
+                            f"С ИИ найдено {b['found']} из {b['gt_total']} и {b['false']} ложное: строки, у которых пара в ВОР есть, "
+                            f"перестали попадать в «нет в ВОР»."))
+
+    false_without, false_with = false_issue_ids(without_ai["issues"]), false_issue_ids(with_ai["issues"])
+    ui.render(ui.section_html("Что показывает каждый режим", "В колонке «По эталону» видно, какие расхождения ложные."))
+    tab_without, tab_with = st.tabs([f"Без ИИ ({len(without_ai['issues'])})", f"С ИИ ({len(with_ai['issues'])})"])
+    with tab_without:
+        ui.stretch(st.dataframe, compact_rows(without_ai["issues"], without_ai["positions"], false_without), hide_index=True, height=460)
+    with tab_with:
+        ui.stretch(st.dataframe, compact_rows(with_ai["issues"], with_ai["positions"], false_with), hide_index=True, height=460)
+
+    ui.render(ui.section_html("Что сопоставил ИИ", "Пары названий, которые правила не склеили, а ИИ сопоставил. Код проверил единицу и числа."))
+    import pandas as pd
+    pairs = pd.DataFrame([{"Документ": {"act": "Акт", "estimate": "Смета"}.get(p["doc_type"], "Док."), "Как написано в документе": p["doc"],
+                           "Как написано в ВОР": p["vor"], "Уверенность": fmt_conf(p["confidence"]), "Причина (ответ ИИ)": p["reason"]}
+                          for p in with_ai["ai_pairs_all"]])
+    ui.stretch(st.dataframe, pairs, hide_index=True, height=420)
+
+    if examples:
+        ui.render(ui.section_html("Как ИИ и код делят работу",
+                                  "ИИ предлагает пару названий, код применяет правила и проверяет единицы и числа. Числа ИИ не считает."))
+        ui.render(ui.examples_html(examples))
+
+    wrong = [r for _, r in compact_rows(with_ai["issues"], with_ai["positions"], false_with).iterrows() if r["По эталону"].startswith("ложное")]
+    ui.render(ui.section_html("Где ИИ ошибается", "Поэтому окончательное решение всегда за специалистом."))
+    if wrong:
+        names = "; ".join(f"«{r['Работа']}» ({r['Влияние']})" for r in wrong)
+        ui.render(ui.claim_html(f"С ИИ осталось {len(wrong)} ложное расхождение: {names}. ИИ не нашёл в ВОР пару, хотя она есть. "
+                                f"Такие случаи помечены «ИИ не нашёл пару в ВОР, требует проверки».", warn=True))
+    else:
+        ui.render(ui.claim_html("В этом прогоне ложных расхождений с ИИ нет, но на других документах они возможны."))
+    ui.render('<div class="app-footer">Прототип. Данные синтетические. Результат требует проверки специалистом.</div>')
