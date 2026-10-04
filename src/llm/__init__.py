@@ -3,7 +3,7 @@ from .cache import LlmCache
 from .client import LlmClient, LlmStats
 from .pair_judge import GeminiPairJudge
 
-AI_COUNTERS = ("calls", "errors", "cache_hits", "no_answer", "low_confidence", "rejected_by_check")
+AI_COUNTERS = ("calls", "errors", "cache_hits", "no_answer", "low_confidence", "rejected_by_check", "quota_errors")
 
 
 def build_default_ai(cfg: dict):

@@ -100,10 +100,10 @@ def test_bad_then_good_answer_succeeds_on_retry(tmp_path):
 
 def test_429_retries_with_exponential_pause_capped_by_config(tmp_path):
     client, sleeps = make(tmp_path, RateLimit("429 RESOURCE_EXHAUSTED"), GOOD,
-                          cfg_over={"max_retries": 3, "retry_pause_seconds": 2, "retry_max_pause_seconds": 3, "call_pause_seconds": 0})
+                          cfg_over={"max_retries": 3, "retry_pause_seconds": 2, "retry_max_pause_seconds": 3, "quota_abort_after": 99})
     assert judge(client).judge_pair(*pair())["same_work"] is True
     client2, sleeps2 = make(tmp_path / "x", RateLimit("429"),
-                            cfg_over={"max_retries": 3, "retry_pause_seconds": 2, "retry_max_pause_seconds": 3, "call_pause_seconds": 0})
+                            cfg_over={"max_retries": 3, "retry_pause_seconds": 2, "retry_max_pause_seconds": 3, "quota_abort_after": 99})
     assert judge(client2).judge_pair(*pair()) is None
     assert sleeps2 == [2, 3, 3] and client2.stats.no_answer == 1          # 2, затем 4 и 8 урезаны до 3
     assert "429" in client2.last_error
@@ -232,3 +232,138 @@ def test_build_default_ai_returns_judge_that_reports_availability(tmp_path, monk
     assert judge_.available is False and matcher is None
     monkeypatch.setenv("GEMINI_API_KEY", SECRET)
     assert build_default_ai(CFG)[0].available is True
+
+
+# ---------- квоты: 429, retry delay, суточный лимит, остановка прогона ----------
+class QuotaError(Exception):
+    """Как ошибка SDK: code и details из ответа Google (RetryInfo, QuotaFailure)."""
+
+    def __init__(self, delay=None, quota_id="GenerateRequestsPerMinutePerProjectPerModel-FreeTier"):
+        super().__init__("429 RESOURCE_EXHAUSTED. You exceeded your current quota")
+        self.code = 429
+        info = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota_id}]}]
+        if delay:
+            info.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": f"{delay}s"})
+        self.details = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "details": info}}
+
+
+def test_quota_errors_and_no_answers_are_never_cached(tmp_path):
+    client, _ = make(tmp_path, QuotaError(5), cfg_over={"quota_abort_after": 99})
+    assert judge(client).judge_pair(*pair()) is None
+    assert client.stats.quota_errors == 2 and client.stats.no_answer == 1
+    assert list((tmp_path / "cache").glob("*")) == []
+    # квота вернулась: тот же вопрос теперь получает ответ, а не «нет решения» из кэша
+    client._transport = FakeTransport(GOOD)
+    assert judge(client).judge_pair(*pair())["same_work"] is True
+
+
+def test_429_waits_for_retry_delay_from_error_with_cap(tmp_path):
+    client, sleeps = make(tmp_path, QuotaError(37), GOOD)
+    assert judge(client).judge_pair(*pair())["same_work"] is True
+    assert sleeps == [37.0]                                           # а не слепое удвоение retry_pause_seconds
+    capped, sleeps = make(tmp_path / "c", QuotaError(500), GOOD, cfg_over={"retry_max_pause_seconds": 60})
+    judge(capped).judge_pair(*pair())
+    assert sleeps == [60]
+
+
+def test_retry_delay_is_read_from_message_text_too(tmp_path):
+    from src.llm.client import parse_quota_error
+    assert parse_quota_error(RuntimeError("429 ... Please retry in 12.5s."))[0] == 12.5
+    assert parse_quota_error(RuntimeError("retry_delay { seconds: 8 }"))[0] == 8
+    assert parse_quota_error(RuntimeError("429 quota"))[0] is None
+
+
+def test_daily_quota_stops_run_without_new_calls(tmp_path):
+    daily = QuotaError(quota_id="GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    client, sleeps = make(tmp_path, daily)
+    j = judge(client)
+    assert j.judge_pair(*pair("Бетон М300")) is None
+    assert client.stop_reason and "суточная квота исчерпана" in client.stop_reason and "завтра" in client.stop_reason
+    calls = client._transport.calls
+    assert calls == 1 and sleeps == []                                # без повтора и без ожидания
+    assert j.judge_pair(*pair("Бетон М350")) is None
+    assert client._transport.calls == calls and j.stop_reason == client.stop_reason
+
+
+def test_minute_limit_is_not_treated_as_daily(tmp_path):
+    client, _ = make(tmp_path, QuotaError(3), GOOD)
+    judge(client).judge_pair(*pair())
+    assert client.stop_reason is None
+
+
+def test_run_stops_after_n_consecutive_429_and_keeps_cache_hits(tmp_path):
+    seeded, _ = make(tmp_path, GOOD)
+    judge(seeded).judge_pair(*pair("Бетон М300"))                      # ответ, полученный до сбоя
+    client, _ = make(tmp_path, QuotaError(1), cfg_over={"quota_abort_after": 3, "max_retries": 1})
+    j = judge(client)
+    assert j.judge_pair(*pair("Бетон М300"))["same_work"] is True      # из кэша, API не нужен
+    assert j.judge_pair(*pair("Окна ПВХ")) is None                    # 429, повтор, 429 (2 подряд)
+    assert client.stop_reason is None
+    assert j.judge_pair(*pair("Двери")) is None                       # третий 429 подряд: стоп
+    assert client.stop_reason and "подряд" in client.stop_reason and client.stats.calls == 3
+    assert j.judge_pair(*pair("Плитка")) is None and client.stats.calls == 3
+    assert j.judge_pair(*pair("Бетон М300"))["same_work"] is True      # кэш по-прежнему читается
+
+
+def test_success_resets_consecutive_429_counter(tmp_path):
+    client, _ = make(tmp_path, QuotaError(1), GOOD, QuotaError(1), GOOD, cfg_over={"quota_abort_after": 2})
+    j = judge(client)
+    assert j.judge_pair(*pair("Бетон М300")) is not None
+    assert j.judge_pair(*pair("Окна ПВХ")) is not None
+    assert client.stop_reason is None
+
+
+def test_max_calls_per_run_stops_new_calls(tmp_path):
+    client, _ = make(tmp_path, GOOD, cfg_over={"max_calls_per_run": 2})
+    j = judge(client)
+    for name in ("Бетон М300", "Бетон М350", "Бетон М400"):
+        j.judge_pair(*pair(name))
+    assert client._transport.calls == 2 and "потолок вызовов" in client.stop_reason
+    assert client.stats.no_answer == 1
+
+
+def test_pipeline_reports_stop_reason(synth, tmp_path):
+    client = LlmClient({**LLM, "quota_abort_after": 3}, transport=FakeTransport(QuotaError(1)),
+                       cache=LlmCache(tmp_path / "cache"), sleep=lambda s: None, env={})
+    s = run_pipeline(synth, tmp_path / "q.db", "llm", judge=GeminiPairJudge(client, CFG))
+    assert s["ai"]["stop_reason"] and s["ai"]["quota_errors"] == 3 and s["ai"]["calls"] == 3
+    assert s["ai"]["no_answer"] == s["ai"]["pairs_asked"] > 3
+
+
+def load_run_llm():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import run_llm
+    return run_llm
+
+
+def test_run_llm_script_flags_incomplete_run_and_applies_options(synth, tmp_path, monkeypatch, capsys):
+    run_llm = load_run_llm()
+    made = {}
+
+    def fake_build(cfg):
+        made["llm"] = cfg["rules"]["llm"]
+        client = LlmClient(cfg["rules"]["llm"], transport=FakeTransport(QuotaError(1)), cache=LlmCache(tmp_path / "cache"),
+                           sleep=lambda s: None, env={})
+        return GeminiPairJudge(client, cfg), None
+
+    monkeypatch.setattr(run_llm, "build_default_ai", fake_build)
+    monkeypatch.setenv("GEMINI_API_KEY", SECRET)
+    code = run_llm.main(["--source", str(synth), "--db", str(tmp_path / "r.db"), "--pause", "0", "--max-calls", "50",
+                         "--model", "test-model"])
+    out = capsys.readouterr().out
+    assert code == 2 and "ПРОГОН НЕПОЛНЫЙ, ЦИФРЫ НЕ ИСПОЛЬЗОВАТЬ" in out and "ПРОГОН ОСТАНОВЛЕН" in out
+    assert "осталось" in out and "из " in out and SECRET not in out
+    assert (made["llm"]["call_pause_seconds"], made["llm"]["max_calls_per_run"], made["llm"]["model"]) == (0, 50, "test-model")
+
+
+def test_run_llm_script_complete_run_has_no_incomplete_warning(synth, tmp_path, monkeypatch, capsys):
+    run_llm = load_run_llm()
+    monkeypatch.setattr(run_llm, "build_default_ai", lambda cfg: (GeminiPairJudge(LlmClient(
+        cfg["rules"]["llm"], transport=FakeTransport(json.dumps({"same_work": False, "confidence": 0.95, "reason": "нет"})),
+        cache=LlmCache(tmp_path / "cache"), sleep=lambda s: None, env={}), cfg), None))
+    monkeypatch.setenv("GEMINI_API_KEY", SECRET)
+    code = run_llm.main(["--source", str(synth), "--db", str(tmp_path / "r2.db"), "--pause", "0"])
+    out = capsys.readouterr().out
+    assert code == 0 and "НЕПОЛНЫЙ" not in out

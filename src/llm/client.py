@@ -7,6 +7,7 @@
 """
 import json
 import os
+import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,9 +26,40 @@ class LlmStats:
     no_answer: int = 0           # запросов, закончившихся «нет ответа»
     low_confidence: int = 0      # ответ есть, но уверенность ниже llm.min_confidence: решения нет
     rejected_by_check: int = 0   # ответ модели противоречит жёсткому правилу кода
+    quota_errors: int = 0        # из errors: ответы 429 (квота)
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+RETRY_DELAY_PATTERNS = [
+    re.compile(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)\s*s", re.I),     # RetryInfo в JSON: "retryDelay": "37s"
+    re.compile(r"retry[_ ]delay\s*\{\s*seconds:\s*(\d+)", re.I),               # то же в текстовом виде protobuf
+    re.compile(r"retry in (\d+(?:\.\d+)?)\s*s", re.I),                          # «Please retry in 37.5s»
+]
+
+
+def parse_quota_error(exc) -> tuple[float | None, bool]:
+    """-> (рекомендованная пауза в секундах или None, суточный ли лимит) по тексту и деталям ошибки 429.
+    Формат ответа Google (RetryInfo, QuotaFailure) взят из документации, на живом API не проверялся: если полей нет,
+    возвращается (None, False) и клиент ждёт по запасной схеме."""
+    parts = [str(exc)]
+    details = getattr(exc, "details", None)
+    if details:
+        parts.append(json.dumps(details, ensure_ascii=False, default=str))
+    blob = " ".join(parts)
+    delay = None
+    for pattern in RETRY_DELAY_PATTERNS:
+        m = pattern.search(blob)
+        if m:
+            delay = float(m.group(1))
+            break
+    daily = bool(re.search(r"PerDay|per day|daily|в сутки", blob, re.I))
+    return delay, daily
+
+
+def is_rate_limited(exc) -> bool:
+    return getattr(exc, "code", None) == 429 or "429" in str(exc)[:200] or "RESOURCE_EXHAUSTED" in str(exc)[:200]
 
 
 class GenaiTransport:
@@ -57,6 +89,8 @@ class LlmClient:
         self.model = llm_cfg["model"]
         self.stats = LlmStats()
         self.last_error = None
+        self.stop_reason = None              # после этого новых вызовов API нет (кэш по-прежнему читается)
+        self.consecutive_429 = 0
         self._key = env.get(llm_cfg["api_key_env"]) or None
         self.cache_only = bool(llm_cfg.get("cache_only")) or env.get(llm_cfg.get("cache_only_env", ""), "").lower() in TRUTHY
         cache_dir = env.get(llm_cfg.get("cache_dir_env", "")) or llm_cfg["cache_dir"]
@@ -103,14 +137,20 @@ class LlmClient:
         if record is not None and validate(record["answer"]):
             self.stats.cache_hits += 1
             return record["answer"]
-        if not self.can_call_api:                                  # режим «только кэш» или нет ключа: API не вызываем
+        if not self.can_call_api or self.stop_reason:     # «только кэш», нет ключа или прогон остановлен: API не вызываем
             self.stats.no_answer += 1
             return None
         retries = int(self.cfg["max_retries"])
         for attempt in range(retries + 1):
+            if self.stop_reason:
+                break
+            max_calls = self.cfg.get("max_calls_per_run")
+            if max_calls and self.stats.calls >= max_calls:
+                self.stop_reason = f"достигнут потолок вызовов за прогон ({max_calls})"
+                break
             self._pause_between_calls()
             self.stats.calls += 1
-            rate_limited = False
+            rate_limited, delay = False, None
             try:
                 text = self._call_transport(prompt, schema)
                 self._last_call = self._clock()
@@ -122,15 +162,33 @@ class LlmClient:
             except Exception as e:  # noqa: BLE001: любой сбой это «нет ответа» после повтора
                 self._last_call = self._clock()
                 code = getattr(e, "code", None)
-                rate_limited = code == 429 or "429" in str(e)[:200] or "RESOURCE_EXHAUSTED" in str(e)[:200]
+                rate_limited = is_rate_limited(e)
                 self.stats.errors += 1
                 self.last_error = f"{type(e).__name__}" + (f" {code}" if code else "") + f": {self._scrub(e)[:300]}"
+                daily = False
+                if rate_limited:
+                    self.stats.quota_errors += 1
+                    self.consecutive_429 += 1
+                    delay, daily = parse_quota_error(e)
+                    if daily:
+                        self.stop_reason = "суточная квота исчерпана, повторите завтра или смените модель"
+                    elif self.consecutive_429 >= int(self.cfg.get("quota_abort_after", 3)):
+                        self.stop_reason = (f"{self.consecutive_429} вызова подряд закончились ошибкой 429 (квота): "
+                                            "прогон остановлен, повторите позже или смените модель")
+                else:
+                    self.consecutive_429 = 0
+                if self.stop_reason:
+                    break
                 if attempt < retries:
-                    pause = self.cfg["retry_pause_seconds"] * (2 ** attempt if rate_limited else 1)
+                    if rate_limited and delay is not None:       # пауза, которую просит сервер (с потолком из конфига)
+                        pause = delay
+                    else:
+                        pause = self.cfg["retry_pause_seconds"] * (2 ** attempt if rate_limited else 1)
                     self._sleep(min(pause, self.cfg["retry_max_pause_seconds"]))
                 continue
+            self.consecutive_429 = 0
             self.cache.put(key, answer, function=function, model=self.model, prompt_version=prompt_version,
-                           payload=payload)
+                           payload=payload)                      # в кэш только валидный ответ; сбои и «нет ответа» не пишутся
             return answer
         self.stats.no_answer += 1
         return None
