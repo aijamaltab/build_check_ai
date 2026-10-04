@@ -112,3 +112,57 @@ def test_analyze_detects_model_error_against_truth(synth, tmp_path):
     a = ep.analyze(str(synth), CFG)
     assert a["confusion"]["fp"] + a["confusion"]["fn"] >= 1 and a["confusion"]["diffs"]
     assert a["confusion"]["accuracy"] < 1.0
+
+
+# ---------- RowMatcher: оценка по строкам (rows_report) на маленьком проекте с известным эталоном ----------
+class FixedRows:
+    available = True
+
+    def __init__(self, by_name):
+        self.by_name = by_name
+
+    def match_row(self, row, vor_keys):
+        answer = self.by_name[row["name_raw"]]
+        if answer is None:
+            return None
+        key_name, confidence = answer
+        key = None if key_name is None else next(v["key"] for v in vor_keys if v["name_raw"] == key_name)
+        return {"key": key, "confidence": confidence, "reason": "тест"}
+
+
+def test_rows_report_counts_correct_false_null_and_no_decision(tmp_path):
+    import sqlite3
+    from tests.project_factory import make_project
+    folder = make_project(tmp_path / "p", vor=[("Кладка кирпичная стен", "м3", 100), ("Монтаж перегородок", "м2", 50), ("Окраска стен", "м2", 80)],
+                          estimate=[("Кладка кирпичная стен", "м3", 100, 1000)],
+                          acts=[[("Возведение ограждающих конструкций", "м3", 10, None), ("Лёгкие стены из гипсокартона", "м2", 5, None),
+                                 ("Гипсокартонные ограждения комнат", "м2", 6, None), ("Видеонаблюдение объекта", "компл", 1, None),
+                                 ("Прочие работы по зданию", "м2", 2, None)]])
+    ids = {"Кладка кирпичная стен": "V1", "Монтаж перегородок": "V2", "Окраска стен": "V3", "Возведение ограждающих конструкций": "V1",
+           "Лёгкие стены из гипсокартона": "V2", "Гипсокартонные ограждения комнат": "V2", "Видеонаблюдение объекта": "X1",
+           "Прочие работы по зданию": "V3"}
+    matcher = FixedRows({"Возведение ограждающих конструкций": ("Кладка кирпичная стен", 0.9),     # верный ключ
+                         "Лёгкие стены из гипсокартона": ("Окраска стен", 0.9),                    # неверный ключ, принят: ложная склейка
+                         "Гипсокартонные ограждения комнат": (None, 0.9),                           # «нет», хотя пара в ВОР есть
+                         "Видеонаблюдение объекта": (None, 0.9),                                    # верное «нет»
+                         "Прочие работы по зданию": None})                                          # нет решения
+    db = tmp_path / "rows.db"
+    run_pipeline(folder, db, "llm", row_matcher=matcher, cfg=CFG, auto_ai=False)
+    conn = sqlite3.connect(db)
+    truth = {(f, r): ids.get(n, "договор") for f, r, n in conn.execute("SELECT source_file, source_row, work_name_raw FROM items")}
+    conn.close()
+    rep = ep.rows_report(db, truth, CFG["rules"]["llm"]["min_confidence"])
+    assert (rep["total"], rep["pair_exists"]) == (5, 4)
+    assert (rep["correct_key"], rep["false_key"], rep["correct_null"], rep["false_null"], rep["no_decision"]) == (1, 1, 1, 1, 1)
+    assert rep["accuracy"] == 0.5 and rep["coverage"] == 0.8
+    assert {i["category"] for i in rep["items"]} == {"false_key", "false_null", "no_decision"}
+    assert next(i for i in rep["items"] if i["category"] == "false_key")["truth"] == "монтаж перегородок"
+
+
+def test_evaluate_gemini_cache_mode_reports_fallback_when_cache_is_empty(synth, tmp_path):
+    import evaluate as ev
+    truth = vm.load_truth()
+    gt, traps = ev.read_csv(ROOT / "data" / "ground_truth.csv"), ev.read_csv(ROOT / "data" / "traps.csv")
+    res = ev.run_config(synth, gt, traps, CFG, truth, "gemini_cache", 90, False, tmp_path)
+    assert res["summary"]["mode"] == "rules_only" and res["found"] == 8          # пустой кэш: как без ИИ, и режим это показывает
+    assert "gemini_cache" in ev.MODE_LABELS

@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import verify_matching as vm  # noqa: E402
 from src.config import load_config  # noqa: E402
+from src.llm import build_default_ai  # noqa: E402
 from src.pipeline import run_pipeline  # noqa: E402
 
 PROJECT = "demo"
@@ -33,6 +34,7 @@ MODE_LABELS = {
     "no_synonyms": "без ИИ, без словаря",
     "synonyms": "без ИИ, со словарём",
     "synonyms_llm": "с ИИ (потолок, не оценка модели)",
+    "gemini_cache": "Gemini по кэшу (судья + RowMatcher, без вызовов API)",
 }
 
 
@@ -115,7 +117,10 @@ def run_config(source, gt_rows, trap_rows, cfg, truth, mode_name, threshold, ai_
         return None
     db = Path(tmp_dir) / f"{mode_name}_{threshold}.db"
     kwargs = {"use_synonyms": mode_name != "no_synonyms", "threshold": threshold, "project_id": PROJECT, "cfg": cfg}
-    if mode_name == "synonyms_llm":
+    if mode_name == "gemini_cache":                   # настоящие судья и RowMatcher только по кэшу (API не вызывается)
+        judge, row_matcher = build_default_ai(cfg, cache_only=True)
+        summary = run_pipeline(source, db, "llm", judge=judge, row_matcher=row_matcher, **kwargs)
+    elif mode_name == "synonyms_llm":
         summary = run_pipeline(source, db, "llm", judge=vm.TruthJudge(truth), row_matcher=vm.TruthRowMatcher(truth), **kwargs)
     else:
         summary = run_pipeline(source, db, "rules_only", **kwargs)
@@ -136,9 +141,11 @@ def run_config(source, gt_rows, trap_rows, cfg, truth, mode_name, threshold, ai_
 def slide_table(results: dict, thresholds) -> str:
     lines = ["| Режим | Порог | Найдено из N | Ложные срабатывания (из них низкой уверенности) | Полнота missing_in_vor | Ловушки сработали | "
              "Ложные «не сопоставлено» (ambiguous / absent) | Ложные склейки |", "|---|---|---|---|---|---|---|---|"]
-    for mode in ("no_synonyms", "synonyms", "synonyms_llm"):
+    for mode in ("no_synonyms", "synonyms", "gemini_cache", "synonyms_llm"):
         for th in thresholds:
             r = results.get((mode, th))
+            if r is None and mode == "gemini_cache":
+                continue                                  # строка появляется только с флагом --gemini-cache
             if r is None:
                 lines.append(f"| {MODE_LABELS[mode]} | {th} | пропущен: реальный ИИ не подключён | | | | | |")
                 continue
@@ -157,6 +164,8 @@ def main() -> int:
     parser.add_argument("--traps", default=str(ROOT / "data" / "traps.csv"))
     parser.add_argument("--ai-ceiling", action="store_true",
                         help="режим synonyms_llm с фейковыми судьями по эталону генератора (потолок, не оценка модели)")
+    parser.add_argument("--gemini-cache", action="store_true",
+                        help="добавить режим «Gemini по кэшу» (судья пар и RowMatcher из data/cache/llm/, API не вызывается)")
     parser.add_argument("-v", "--verbose", action="store_true", help="ложные срабатывания и ложные «не сопоставлено» списком")
     args = parser.parse_args()
 
@@ -168,6 +177,9 @@ def main() -> int:
         for mode in cfg["rules"]["evaluate"]["modes"]:
             for th in thresholds:
                 results[(mode, th)] = run_config(args.source, gt_rows, trap_rows, cfg, truth, mode, th, args.ai_ceiling, tmp)
+        if args.gemini_cache:
+            for th in thresholds:
+                results[("gemini_cache", th)] = run_config(args.source, gt_rows, trap_rows, cfg, truth, "gemini_cache", th, False, tmp)
     print("Оценка на синтетике (данные искусственные, словарь составлен по тем же названиям: цифры оптимистичны).\n")
     for (mode, th), r in results.items():
         if r is None:
@@ -179,13 +191,22 @@ def main() -> int:
               f"{'-' if r['precision'] is None else format(r['precision'], '.2f')}, полнота missing_in_vor {r['missing_found']} из "
               f"{r['missing_total']}, ловушки сработали {r['traps_triggered']} из {len(r['traps'])}"
               f"{[t['trap_id'] for t in r['traps'] if t['triggered']] or ''}")
+        if mode == "gemini_cache":
+            ai = r["summary"]["ai"]
+            if r["summary"]["mode"] != "llm":
+                print("    [!] кэш Gemini пуст или недоступен: прогон фактически шёл как rules_only, строка не отражает модель")
+            else:
+                print(f"    Gemini по кэшу: пар {ai['pairs_asked']} (без ответа {ai['pairs_no_decision']}), строк RowMatcher {ai['rows_asked']} "
+                      f"(без ответа {ai['rows_no_decision']}), попаданий в кэш {ai['cache_hits']}"
+                      + ("; [!] кэш неполный (для текущих версий промтов нет части ответов), цифры не использовать"
+                         if ai["pairs_no_decision"] or ai["rows_no_decision"] else ""))
         print(f"    сопоставление: верно {r['matched_ok']}, ложных склеек {r['false_merges']}, ambiguous {r['ambiguous']}, "
               f"absent верно {r['true_absent']}, absent ложно {r['false_absent']}")
         if args.verbose:
             for i in r["false_issues"]:
                 print(f"    ложное срабатывание: {i['issue_type']} {i['source_file']}:{i['source_sheet']}:{i['source_row']} {i['work_key']}")
     print("\nКакие GT не найдены и почему:")
-    for key in [(m, th) for m in ("synonyms", "synonyms_llm") for th in thresholds]:
+    for key in [(m, th) for m in ("synonyms", "gemini_cache", "synonyms_llm") for th in thresholds]:
         r = results.get(key)
         if r is None:
             continue

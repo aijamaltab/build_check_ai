@@ -57,15 +57,16 @@ def run_pipeline(source_dir, db_path, mode: str = "rules_only", judge=None, row_
 
         result = compute_matching(load_rows(conn, project_id), cfg, use_synonyms, threshold)
         save_matching(conn, result, project_id, cfg, effective)
-        ai = {"pairs_asked": 0, "pairs_accepted": 0, "rows_asked": 0, "rows_accepted": 0, "rows_none": 0, "rows_rejected": 0,
+        ai = {"pairs_asked": 0, "pairs_accepted": 0, "rows_asked": 0, "rows_accepted": 0, "rows_none": 0, "rows_rejected": 0, "pairs_no_decision": 0, "rows_no_decision": 0,
               **dict.fromkeys(AI_COUNTERS, 0), "stop_reason": None, "warnings": []}
         if effective == "llm":
             if judge is not None:
                 stats = resolve_candidates(conn, judge, cfg, project_id)
-                ai["pairs_asked"], ai["pairs_accepted"] = stats.asked, stats.accepted
+                ai["pairs_asked"], ai["pairs_accepted"], ai["pairs_no_decision"] = stats.asked, stats.accepted, stats.invalid
             if row_matcher is not None:
                 stats = resolve_rows(conn, row_matcher, cfg, project_id)
-                ai.update(rows_asked=stats.asked, rows_accepted=stats.accepted, rows_none=stats.none, rows_rejected=stats.rejected)
+                ai.update(rows_asked=stats.asked, rows_accepted=stats.accepted, rows_none=stats.none, rows_rejected=stats.rejected,
+                          rows_no_decision=stats.reasons.get("rejected: invalid", 0))
             for ai_obj in (judge, row_matcher):                # счётчики клиента Gemini (у фейковых судей их нет)
                 ai["stop_reason"] = ai["stop_reason"] or getattr(ai_obj, "stop_reason", None)
                 ai["warnings"] = ai["warnings"] or list(getattr(ai_obj, "warnings", []))

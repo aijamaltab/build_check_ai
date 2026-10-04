@@ -64,18 +64,20 @@ def main(argv=None) -> int:
         print(f"[!] {summary['banner']} (запрошен режим llm)")
     print(summary["text"])
     ai = summary["ai"]
-    answered = ai["pairs_asked"] - ai["no_answer"]
-    print(f"\nИИ (модель {llm['model']}): пар отправлено судье {ai['pairs_asked']}, принято {ai['pairs_accepted']}")
+    print(f"\nИИ (модель {llm['model']}): пар отправлено судье {ai['pairs_asked']}, принято {ai['pairs_accepted']}, без решения {ai['pairs_no_decision']}")
+    print(f"RowMatcher: строк отправлено {ai['rows_asked']}, принято {ai['rows_accepted']}, подтверждено «в ВОР нет» {ai['rows_none']}, "
+          f"отклонено кодом {ai['rows_rejected'] - ai['rows_no_decision']}, без решения {ai['rows_no_decision']}")
     print("Счётчики: " + ", ".join(f"{name} {ai[name]}" for name in AI_COUNTERS))
     for warning in ai["warnings"]:
         print("[!]", warning)
     if client is not None and client.last_error:
         print("Последняя ошибка API (ключ вырезан):", client.last_error)
-    incomplete = bool(ai["quota_errors"] or ai["no_answer"] or ai["stop_reason"])
+    incomplete = bool(ai["quota_errors"] or ai["no_answer"] or ai["stop_reason"] or ai["pairs_no_decision"] or ai["rows_no_decision"])
     if ai["stop_reason"]:
         print(f"\n[!] ПРОГОН ОСТАНОВЛЕН: {ai['stop_reason']}.")
-    if ai["pairs_asked"]:
-        print(f"Пар разобрано {answered} из {ai['pairs_asked']}, осталось {ai['no_answer']}. "
+    if ai["pairs_asked"] or ai["rows_asked"]:
+        print(f"Пар разобрано {ai['pairs_asked'] - ai['pairs_no_decision']} из {ai['pairs_asked']}, осталось {ai['pairs_no_decision']}; "
+              f"строк разобрано {ai['rows_asked'] - ai['rows_no_decision']} из {ai['rows_asked']}, осталось {ai['rows_no_decision']}. "
               "Полученные ответы сохранены в кэш; повторный запуск возьмёт их из кэша.")
     print(f"Время: {elapsed:.1f} с; режим {summary['mode']}; кэш {client.cache.dir if client else '-'}")
     if incomplete:

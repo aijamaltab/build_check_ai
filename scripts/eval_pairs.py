@@ -7,6 +7,8 @@
 ответа. Каждая пара, ушедшая судье, сравнивается с эталоном (журнал генератора): матрица ошибок по ответам модели, список
 расхождений, работа проверки кода, затем метрики evaluate.py для режимов «без ИИ со словарём», «настоящий судья по кэшу»
 и «потолок» (фейковые судьи по эталону: это не оценка модели), причины ненайденных GT и ложных missing_in_vor.
+Судья пар и RowMatcher идут вместе, как в run_pipeline: для RowMatcher печатается оценка по строкам (accuracy выбора ключа,
+верные «нет», ложные ключи, склейки, отклонённые кодом, список расхождений с эталоном).
 Данные синтетические, словарь составлен по тем же названиям: цифры оптимистичны. Файлы проекта и данные не меняются.
 """
 import argparse
@@ -22,7 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import evaluate as ev  # noqa: E402
 import verify_matching as vm  # noqa: E402
 from src.config import load_config  # noqa: E402
-from src.llm import GeminiPairJudge, LlmClient  # noqa: E402
+from src.llm import GeminiPairJudge, build_default_ai  # noqa: E402
 from src.pipeline import run_pipeline  # noqa: E402
 
 CHECK_PREFIX = "отклонено проверкой"
@@ -167,6 +169,44 @@ def diagnose(conn, group_id, truth, outcomes, project_id="demo") -> dict:
     return d
 
 
+def rows_report(db, truth, min_confidence) -> dict:
+    """Оценка RowMatcher по таблице решений staging_llm_row_decisions (итог после проверок кода) против эталона."""
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    vor_truth = {g["final_work_key"]: group_truth_set(conn, g["group_id"], truth) for g in conn.execute(
+        "SELECT group_id, final_work_key FROM staging_match_groups WHERE project_id = ? AND doc_type = 'vor'", (ev.PROJECT,))}
+    vor_name_by_truth = {frozenset(t): key.split(":", 1)[-1].rsplit("|", 1)[0] for key, t in vor_truth.items()}
+    rep = {"total": 0, "pair_exists": 0, "correct_key": 0, "false_key": 0, "correct_null": 0, "false_null": 0,
+           "rejected_by_code": 0, "right_key_rejected": 0, "no_decision": 0, "items": []}
+    for d in conn.execute("SELECT d.*, g.name AS name FROM staging_llm_row_decisions d JOIN staging_match_groups g "
+                          "ON g.group_id = d.group_id WHERE d.project_id = ?", (ev.PROJECT,)):
+        t = group_truth_set(conn, d["group_id"], truth)
+        exists = not t <= vm.NO_VOR_ITEMS
+        rep["total"] += 1
+        rep["pair_exists"] += 1 if exists else 0
+        out, category = d["outcome"], None
+        chosen_ok = vor_truth.get(d["chosen_key"]) == t if d["chosen_key"] else False
+        if out == "accepted":
+            category = "correct_key" if chosen_ok else "false_key"
+        elif out == "none" and d["confidence"] >= min_confidence:
+            category = "false_null" if exists else "correct_null"
+        elif out == "rejected: invalid" or (out == "none" and not d["reason"].startswith(CHECK_PREFIX)):
+            category = "no_decision"
+        else:
+            category = "rejected_by_code"
+            rep["right_key_rejected"] += 1 if chosen_ok else 0
+        rep[category] += 1
+        if category == "false_key" or (exists and category in ("false_null", "no_decision", "rejected_by_code")):
+            rep["items"].append({"category": category, "name": d["name"], "chosen": d["chosen_key"], "truth": vor_name_by_truth.get(frozenset(t)),
+                                 "confidence": d["confidence"], "reason": d["reason"], "outcome": out})
+    answered = rep["correct_key"] + rep["false_key"] + rep["correct_null"] + rep["false_null"]
+    rep["answered"] = answered
+    rep["accuracy"] = (rep["correct_key"] + rep["correct_null"]) / answered if answered else None
+    rep["coverage"] = answered / rep["total"] if rep["total"] else None
+    conn.close()
+    return rep
+
+
 def evaluate_db(db, summary, gt_rows, trap_rows, truth) -> dict:
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
@@ -242,18 +282,19 @@ def metrics_row(label, r):
 
 def analyze(source, cfg, threshold=None) -> dict:
     """Весь анализ без печати (для тестов): -> словарь с матрицей, проверкой, метриками, причинами."""
-    llm = {**cfg["rules"]["llm"], "cache_only": True}            # API не вызывается даже при ключе в окружении
-    cfg = {**cfg, "rules": {**cfg["rules"], "llm": llm}}
-    client = LlmClient(llm)
-    judge = RecordingJudge(GeminiPairJudge(client, cfg))
+    inner, row_matcher = build_default_ai(cfg, cache_only=True)   # API не вызывается даже при ключе в окружении
+    client = inner.client
+    judge = RecordingJudge(inner)
     truth = vm.load_truth()
     gt_rows, trap_rows = ev.read_csv(ROOT / "data" / "ground_truth.csv"), ev.read_csv(ROOT / "data" / "traps.csv")
     th = threshold or cfg["rules"]["matching"]["fuzzy_threshold"]
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "real.db"
-        summary = run_pipeline(source, db, "llm", judge=judge, project_id=ev.PROJECT, cfg=cfg, threshold=th, auto_ai=False)
+        summary = run_pipeline(source, db, "llm", judge=judge, row_matcher=row_matcher, project_id=ev.PROJECT, cfg=cfg, threshold=th,
+                               auto_ai=False)
         real = evaluate_db(db, summary, gt_rows, trap_rows, truth)
         outcomes = {(r["a"]["file"], r["a"]["row"], r["b"]["file"], r["b"]["row"]): outcome(r) for r in judge.records}
+        rows = rows_report(db, truth, cfg["rules"]["llm"]["min_confidence"])
         reasons = not_found_reasons(db, real["not_found"], truth, outcomes)
         misses = false_missing(db, real["false_issues"], truth, outcomes)
         conn = sqlite3.connect(db)
@@ -266,7 +307,7 @@ def analyze(source, cfg, threshold=None) -> dict:
     return {"records": judge.records, "confusion": confusion(judge.records, truth), "checks": check_report(judge.records, judge.inner),
             "outcomes": {k: sum(1 for r in judge.records if outcome(r) == k) for k in
                          ("answered", "rejected_by_check", "low_confidence", "no_answer")},
-            "stats": client.stats.as_dict(), "real": real, "base": base, "ceiling": ceiling, "reasons": reasons,
+            "stats": client.stats.as_dict(), "real": real, "base": base, "ceiling": ceiling, "reasons": reasons, "rows": rows,
             "false_missing": misses, "ambiguous_rows": extra, "threshold": th, "cache_entries": sum(
                 1 for _ in client.cache.dir.glob("[!_]*.json")) if client.cache.dir.is_dir() else 0}
 
@@ -331,6 +372,21 @@ def main(argv=None) -> int:
     amb = a["ambiguous_rows"]
     print(f"\nСтроки ambiguous (в issues не идут, но без решения): {len(amb)}; пара в ВОР есть у {sum(1 for r in amb if r['vor_has_pair'])}, "
           f"правильный кандидат был у {sum(1 for r in amb if r['right_candidate'])}. Это тоже поле для RowMatcher.")
+    r = a["rows"]
+    print("\n## 6. RowMatcher по эталону (итог после проверок кода)\n")
+    acc_rows = "-" if r["accuracy"] is None else f"{r['accuracy']:.2f} ({r['correct_key'] + r['correct_null']} из {r['answered']})"
+    cov = "-" if r["coverage"] is None else f"{r['coverage']:.2f}"
+    print(md(["Показатель", "Строк (групп)"],
+             [["отправлено RowMatcher (ambiguous и absent после судьи)", r["total"]], ["из них пара в ВОР есть по эталону", r["pair_exists"]],
+              ["верно выбран ключ", r["correct_key"]], ["ЛОЖНАЯ склейка (принят неверный ключ)", r["false_key"]],
+              ["верное «в ВОР нет»", r["correct_null"]], ["ЛОЖНОЕ «в ВОР нет» (пара в ВОР была)", r["false_null"]],
+              ["отклонено проверкой кода (из них ключ был верным)", f"{r['rejected_by_code']} ({r['right_key_rejected']})"],
+              ["нет решения (нет ответа, низкая уверенность)", r["no_decision"]]]))
+    print(f"\nAccuracy по строкам с ответом: {acc_rows}; покрытие (строк с принятым ответом): {cov}")
+    if r["items"]:
+        print("\nРасхождения с эталоном (только строки, где пара в ВОР есть, и все ложные склейки):")
+        print(md(["Тип", "Строка", "Выбранный ключ", "Правильная позиция ВОР", "confidence", "Исход", "reason"],
+                 [[i["category"], i["name"], i["chosen"] or "-", i["truth"] or "-", i["confidence"], i["outcome"], i["reason"]] for i in r["items"]]))
     print("\nОговорки: данные синтетические, словарь составлен по тем же названиям, цифры оптимистичны. Строка «потолок» "
           "это фейковые судьи по эталону, а не оценка модели. Оценка по неполному кэшу не использовать как итог.")
     return 0
