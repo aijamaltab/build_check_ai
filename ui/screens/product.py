@@ -76,7 +76,8 @@ def render(rationale_page=None) -> None:
              {"label": "Возможных расхождений", "value": fmt_num(m["issues"])},
              {"label": "Возможное влияние на бюджет, сом", "value": fmt_num(m["impact"]),
               "note": "Оценка размера возможных расхождений, не вывод о потерях"},
-             {"label": "Позиции для проверки", "value": fmt_num(m["review_positions"]), "note": "красные и жёлтые позиции"}]
+             {"label": "Позиции с отклонением от плана", "value": fmt_num(m["review_positions"]),
+              "note": "красные и жёлтые позиции: расхождение или выполнение меньше плана"}]
     ui.render(ui.metric_cards_html(cards))
     if m["impact_extra_n"]:
         ui.render(f'<div class="note-small">В сумму не входят ещё {m["impact_extra_n"]} расхождений низкой уверенности '

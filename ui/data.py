@@ -439,7 +439,7 @@ def quality_compare(rules_issues: pd.DataFrame, llm_issues: pd.DataFrame) -> lis
 
 
 def detail_rows(without_ai: dict, with_ai: dict) -> list:
-    """Подробное сравнение режимов: качество по эталону и числа из summary (строки без пары, светофор, позиции для проверки, влияние)."""
+    """Подробное сравнение режимов: качество по эталону и числа из summary (строки без пары, светофор, позиции с отклонением от плана, влияние)."""
     rows = quality_compare(without_ai["issues"], with_ai["issues"])
     sa, sb = without_ai["summary"], with_ai["summary"]
     ma = headline_metrics(sa, without_ai["issues"], without_ai["positions"])
@@ -449,7 +449,7 @@ def detail_rows(without_ai: dict, with_ai: dict) -> list:
     return rows + [("Строк без пары", fmt_num(sa["k"]), fmt_num(sb["k"])),
                    ("Строк без решения, нужна проверка", fmt_num(sa["a"]), fmt_num(sb["a"])),
                    ("Светофор: красные / жёлтые / зелёные", light(sa), light(sb)),
-                   ("Позиции для проверки (красные и жёлтые)", fmt_num(ma["review_positions"]), fmt_num(mb["review_positions"])),
+                   ("Позиции с отклонением от плана (красные и жёлтые)", fmt_num(ma["review_positions"]), fmt_num(mb["review_positions"])),
                    ("Возможное влияние на бюджет, сом", impact_a, fmt_num(mb["impact"]))]
 
 
@@ -464,7 +464,7 @@ def impact_split(issues: pd.DataFrame) -> dict:
 
 
 def headline_metrics(summary: dict, issues: pd.DataFrame, positions: pd.DataFrame) -> dict:
-    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, позиции для проверки (красные и жёлтые из position_status).
+    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, позиции с отклонением от плана (красные и жёлтые из position_status).
 
     Влияние: в режиме llm общая сумма из summary; в режиме без ИИ крупно только высокая уверенность, остальное отдельно (мелко)."""
     split = impact_split(issues)
