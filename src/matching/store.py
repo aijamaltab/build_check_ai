@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS staging_match_candidates (
     judge_reason       TEXT,
     judge_confidence   REAL
 );
+CREATE TABLE IF NOT EXISTS staging_llm_row_decisions (
+    decision_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id   TEXT,
+    group_id     INTEGER,
+    chosen_key   TEXT,
+    confidence   REAL,
+    reason       TEXT,
+    outcome      TEXT
+);
 """
 
 TABLES_BY_ITEM = ("staging_match_rows",)
@@ -87,7 +96,7 @@ def clear_matching(conn, project_id: str, cfg: dict) -> None:
                  f"(SELECT match_id FROM matches WHERE item_id IN ({items}))", (project_id,))
     conn.execute(f"DELETE FROM matches WHERE item_id IN ({items})", (project_id,))
     conn.execute(f"DELETE FROM staging_match_rows WHERE item_id IN ({items})", (project_id,))
-    for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run"):
+    for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run", "staging_llm_row_decisions"):
         conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
     names = (cfg["rules"]["matching"]["kind_unknown_dq_check"], cfg["rules"]["matching"]["ambiguous_dq_check"])
     conn.execute(f"DELETE FROM dq_checks WHERE check_name IN (?, ?) AND doc_id IN ({docs})", (*names, project_id))

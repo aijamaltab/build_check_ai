@@ -197,7 +197,7 @@ def test_rules_have_llm_block_with_required_keys():
         assert key in llm, key
     assert llm["temperature"] == 0
     assert llm["modes"] == ["llm", "rules_only"] and llm["default_mode"] == "llm"
-    assert set(llm["functions"]) == {"matching", "template_reading", "explanations", "report"}
+    assert set(llm["functions"]) == {"matching", "row_matching", "template_reading", "explanations", "report"}
     assert all(isinstance(v, bool) for v in llm["functions"].values())
     assert llm["max_retries"] >= 0 and llm["timeout"] > 0 and llm["schema_version"]
     assert llm["cache_dir"].startswith("data/cache")

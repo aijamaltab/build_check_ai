@@ -8,6 +8,10 @@
   не сопоставлена, и так должно быть  позиции без ВОР (отмостка, видеонаблюдение: GT-9, GT-10);
   ложная «не сопоставлена»  пара в ВОР есть, но не найдена; из них: нужная пара есть среди кандидатов для LLM,
   в кандидатах только чужие, кандидатов нет.
+Состояния строки (спецификация §6): matched / ambiguous / absent. Колонки: matched верно, ложная склейка, ambiguous,
+absent верно (позиции без ВОР), absent ложно (пара в ВОР есть, но кандидатов нет: порождает ложный missing_in_vor).
+Строки «потолок» показывают, что получится, если судья (PairJudge) и ИИ-матчер (RowMatcher) отвечают по эталону генератора:
+это верхняя граница при идеальном ИИ, а не оценка качества настоящей модели.
 Генерация идёт во временную папку, файлы в data/ не трогаются. Пороги под результат не подгоняются.
 Оговорка: словарь synonyms.yaml составлен по синтетике, цифры оптимистичны.
 """
@@ -22,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.config import load_config  # noqa: E402
 from src.db import get_connection  # noqa: E402
-from src.matching import compute_matching, load_rows  # noqa: E402
+from src.matching import (compute_matching, load_rows, resolve_candidates, resolve_rows, save_matching)  # noqa: E402
 
 NO_VOR_ITEMS = {"X1", "X2"}      # позиции, которых нет в ВОР: «не сопоставлена» для них правильный результат
 
@@ -77,6 +81,93 @@ def compare(result, truth) -> dict:
     return out
 
 
+def compare_db(conn, project_id, truth) -> dict:
+    """Метрики по состоянию в БД (после save_matching и, возможно, resolve_candidates / resolve_rows), по строкам документов."""
+    def rows_of(group_id):
+        return conn.execute("SELECT i.source_file, i.source_row FROM staging_match_rows r JOIN items i USING(item_id) "
+                            "WHERE r.group_id = ?", (group_id,)).fetchall()
+
+    def truth_set(group_id):
+        return {truth[(r["source_file"], r["source_row"])] for r in rows_of(group_id)}
+
+    out = {"matched_ok": 0, "matched_wrong": 0, "ambiguous": 0, "ambiguous_right_cand": 0, "absent_ok": 0, "absent_wrong": 0,
+           "llm_rows": 0, "wrong_pairs": [], "absent_wrong_list": [], "ambiguous_list": []}
+    vor_truth = {g["group_id"]: truth_set(g["group_id"]) for g in conn.execute(
+        "SELECT group_id FROM staging_match_groups WHERE project_id = ? AND doc_type = 'vor'", (project_id,))}
+    for g in conn.execute("SELECT * FROM staging_match_groups WHERE project_id = ? AND doc_type != 'vor' ORDER BY doc_id, first_item_id",
+                          (project_id,)).fetchall():
+        n, t = len(rows_of(g["group_id"])), truth_set(g["group_id"])
+        first = rows_of(g["group_id"])[0]
+        label = (first["source_file"], first["source_row"], g["name"])
+        if g["status"] == "matched":
+            if t == vor_truth[g["matched_group_id"]]:
+                out["matched_ok"] += n
+            else:
+                out["matched_wrong"] += n
+                out["wrong_pairs"].append(label + (conn.execute("SELECT name FROM staging_match_groups WHERE group_id = ?",
+                                                                (g["matched_group_id"],)).fetchone()[0],))
+            if conn.execute("SELECT 1 FROM staging_matches_ext WHERE group_id = ? AND stage IN ('llm', 'llm_row')", (g["group_id"],)).fetchone():
+                out["llm_rows"] += n
+        elif g["status"] == "ambiguous":
+            out["ambiguous"] += n
+            cands = conn.execute("SELECT candidate_group_id FROM staging_match_candidates WHERE group_id = ?", (g["group_id"],)).fetchall()
+            right = any(vor_truth[c["candidate_group_id"]] == t for c in cands)
+            out["ambiguous_right_cand"] += n if right else 0
+            out["ambiguous_list"].append(label + (right,))
+        else:                                                    # absent
+            if t <= NO_VOR_ITEMS:
+                out["absent_ok"] += n
+            else:
+                out["absent_wrong"] += n
+                out["absent_wrong_list"].append(label)
+    out["rows"] = out["matched_ok"] + out["matched_wrong"] + out["ambiguous"] + out["absent_ok"] + out["absent_wrong"]
+    return out
+
+
+class TruthJudge:
+    """Фейковый PairJudge по эталону генератора: потолок при идеальном судье."""
+    available = True
+
+    def __init__(self, truth):
+        self.truth = truth
+
+    def judge_pair(self, a, b, context):
+        same = self.truth.get((a["file"], a["row"])) == self.truth.get((b["file"], b["row"]))
+        return {"same_work": same, "confidence": 1.0, "reason": "эталон генератора"}
+
+
+class TruthRowMatcher:
+    """Фейковый RowMatcher по эталону генератора: выбирает ключ ВОР той же работы или None."""
+    available = True
+
+    def __init__(self, truth):
+        self.truth = truth
+
+    def match_row(self, row, vor_keys):
+        t = self.truth.get((row["file"], row["row"]))
+        for k in vor_keys:
+            if self.truth.get((k["file"], k["row"])) == t:
+                return {"key": k["key"], "confidence": 1.0, "reason": "эталон генератора"}
+        return {"key": None, "confidence": 1.0, "reason": "в ВОР нет такой работы (эталон генератора)"}
+
+
+def run_config(base_conn, project_id, cfg, truth, use_synonyms, threshold, missing_side=None, judge=None, row_matcher=None):
+    """Один прогон matching в копии БД в памяти: исходная БД не меняется. -> метрики compare_db."""
+    import sqlite3
+    mem = sqlite3.connect(":memory:")
+    mem.row_factory = sqlite3.Row
+    base_conn.backup(mem)
+    result = compute_matching(load_rows(mem, project_id), cfg, use_synonyms, threshold, missing_side)
+    save_matching(mem, result, project_id, cfg)
+    if judge is not None:
+        resolve_candidates(mem, judge, cfg, project_id)
+    if row_matcher is not None:
+        resolve_rows(mem, row_matcher, cfg, project_id)
+    metrics = compare_db(mem, project_id, truth)
+    mem.close()
+    return metrics
+
+
 CONFIGS = [  # (подпись, use_synonyms, missing_side)
     ("без синонимов", False, None),
     ("с синонимами, missing_side=block", True, "block"),
@@ -95,20 +186,28 @@ def main() -> int:
     conn = get_connection(args.db)
     rows = load_rows(conn, args.project)
     truth = load_truth()
-    print("Строки документов (смета и акты): правильно / ложные склейки / не сопоставлена, и так должно быть / "
-          "ложные «не сопоставлена» (из них: нужная пара в кандидатах LLM / только чужие / кандидатов нет)")
+    header = (f"  {'режим':<44}{'порог':>6}{'matched верно':>15}{'ложная склейка':>16}{'ambiguous':>11}"
+              f"{'(нужная пара в канд.)':>23}{'absent верно':>14}{'absent ложно':>14}")
+    print(f"Строки документов (смета и акты), всего {len(rows) - len([r for r in rows if r.doc_type == 'vor'])}:")
+    print(header)
+    def line(label, th, m):
+        print(f"  {label:<44}{th:>6}{m['matched_ok']:>15}{m['matched_wrong']:>16}{m['ambiguous']:>11}"
+              f"{m['ambiguous_right_cand']:>23}{m['absent_ok']:>14}{m['absent_wrong']:>14}")
+        if args.verbose:
+            for f, r, a, b in m["wrong_pairs"]:
+                print(f"      ЛОЖНАЯ СКЛЕЙКА {f}:{r} «{a}» -> «{b}»")
+            for f, r, a in m["absent_wrong_list"]:
+                print(f"      absent ложно {f}:{r} «{a}»")
+            for f, r, a, right in m["ambiguous_list"]:
+                print(f"      ambiguous {f}:{r} «{a}» [{'нужная пара среди кандидатов' if right else 'нужной пары в кандидатах нет'}]")
     for label, syn, side in CONFIGS:
         for th in cfg["rules"]["evaluate"]["thresholds"]:
-            res = compute_matching(rows, cfg, syn, th, side)
-            m = compare(res, truth)
-            print(f"  {label:<34} порог {th}: из {m['rows']}: правильно {m['correct']}, ложных склеек {m['wrong']}, "
-                  f"верно не сопоставлено {m['true_missing']}, ложных «не сопоставлена» {m['false_unmatched']} "
-                  f"({m['cand_right']} / {m['cand_wrong']} / {m['cand_none']}), ложных слияний внутри ВОР {len(m['vor_mixed'])}")
-            if args.verbose:
-                for f, r, a, b, s in m["wrong_pairs"]:
-                    print(f"      ЛОЖНАЯ СКЛЕЙКА {f}:{r} «{a}» -> «{b}» (score {s:.0f})")
-                for f, r, a, kind in m["false_unmatched_list"]:
-                    print(f"      не сопоставлена {f}:{r} «{a}» [{kind}]")
+            line(label, th, run_config(conn, args.project, cfg, truth, syn, th, side))
+    print("  потолок при идеальном ИИ (фейковые судьи по эталону генератора):")
+    for th in cfg["rules"]["evaluate"]["thresholds"]:
+        line("PairJudge по эталону", th, run_config(conn, args.project, cfg, truth, True, th, judge=TruthJudge(truth)))
+        line("PairJudge + RowMatcher по эталону", th, run_config(conn, args.project, cfg, truth, True, th, judge=TruthJudge(truth),
+                                                                   row_matcher=TruthRowMatcher(truth)))
     print("\nОговорка: словарь synonyms.yaml составлен по синтетике, цифры оптимистичны; на реальных документах они ниже.")
     conn.close()
     return 0

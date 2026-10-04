@@ -74,7 +74,7 @@ def reset_project(conn, project_id: str) -> None:
                      f"(SELECT match_id FROM matches WHERE item_id IN ({items}))", (project_id,))
     if "staging_match_rows" in existing:
         conn.execute(f"DELETE FROM staging_match_rows WHERE item_id IN ({items})", (project_id,))
-    for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run"):
+    for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run", "staging_llm_row_decisions"):
         if table in existing:
             conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
     conn.execute(f"DELETE FROM matches WHERE item_id IN ({items})", (project_id,))

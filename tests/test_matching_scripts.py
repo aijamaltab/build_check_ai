@@ -85,3 +85,14 @@ def test_reingest_after_matching_does_not_break_on_foreign_keys(prepared, tmp_pa
     for table in ("matches", "staging_matches_ext", "staging_match_groups", "staging_match_rows", "staging_match_candidates"):
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
     assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 181
+
+
+def test_verify_matching_script_prints_state_columns_and_ceiling(prepared):
+    out = subprocess.run([sys.executable, str(ROOT / "scripts" / "verify_matching.py"), "--db", str(prepared["db"])],
+                         capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    for phrase in ("matched верно", "ложная склейка", "ambiguous", "absent верно", "absent ложно", "без синонимов",
+                   "с синонимами, missing_side=allow", "PairJudge по эталону", "PairJudge + RowMatcher по эталону",
+                   "потолок при идеальном ИИ", "Оговорка"):
+        assert phrase in out, phrase
+    lines = [line for line in out.splitlines() if "RowMatcher по эталону" in line]
+    assert len(lines) == 2 and all(line.split()[-3:] == ["0", "2", "0"] for line in lines)    # ambiguous 0, absent верно 2, ложно 0
