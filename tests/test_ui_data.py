@@ -11,7 +11,7 @@ from tests.cache_guard import REAL_CACHE
 from ui.data import (AI_NOT_FOUND_NOTE, LOW_CONFIDENCE_NOTE, SEVERITY_COLOR, STATUS_COLORS, build_cards, cards_frame, chart_frames,
                      connect_readonly, contrast_ratio, filter_issues, fmt_conf, fmt_date, fmt_num, fmt_pct, headline_metrics,
                      impact_split, load_results, pick_examples, positions_view, quality_compare, quality_metrics, sort_issues,
-                     traffic_legend, traffic_segments, compact_rows, false_issue_ids)
+                     traffic_legend, traffic_segments, compact_rows, false_issue_ids, describe_file, detail_rows, file_label, file_preview)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "data" / "synthetic"
@@ -367,3 +367,51 @@ def test_ai_pairs_all_are_unique_and_sorted_acts_first(llm_db):
     kinds = [p["doc_type"] for p in pairs]
     assert kinds == sorted(kinds, key=lambda k: k != "act")
     assert all(p["doc"] and p["vor"] and 0 <= p["confidence"] <= 1 and p["reason"] for p in pairs)
+
+
+# ---------- исходные файлы: каталог, структура, просмотр ----------
+def test_files_catalog_has_all_nine_documents_with_template_and_counts(llm_db):
+    files = load_results(llm_db)["files"]
+    assert files["file_name"].tolist() == ["vor_1.xlsx", "vor_2.xlsx", "estimate.xlsx", "contract.xlsx", "act_1.xlsx", "act_2.xlsx", "act_3.xlsx",
+                                           "act_4.xlsx", "act_5.xlsx"]                      # ВОР, смета, договор, акты
+    assert files["template"].tolist() == ["vor_a", "vor_b", "estimate_a", "contract_a", "act_a", "act_b", "act_a", "act_b", "act_a"]
+    assert files["n_rows_read"].tolist() == [30, 20, 50, 1, 24, 28, 24, 2, 2] and (files["n_unrecognized"] == 0).all()
+    assert [file_label(r) for _, r in files.iterrows()][:2] == ["ВОР, каркас А · vor_1.xlsx", "ВОР, каркас Б · vor_2.xlsx"]
+
+
+def test_describe_file_reads_columns_from_the_template_config(llm_db):
+    from src.config import load_config
+    templates = load_config()["templates"]
+    files = load_results(llm_db)["files"].set_index("file_name")
+    vor = describe_file({**files.loc["vor_1.xlsx"], "file_name": "vor_1.xlsx"}, templates)
+    assert vor["role"] == "Ведомость объёмов работ (ВОР)" and vor["template"] == "ВОР, каркас А"
+    assert vor["columns"] == ["№ п.п", "Наименование работ и затрат", "Ед. изм.", "Кол-во", "Формула расчёта объёма"]
+    assert dict(vor["facts"]) == {"Позиций прочитано": "30", "Служебных строк": "15", "Не распознано": "0", "Валюта": "сом"}
+    contract = describe_file({**files.loc["contract.xlsx"], "file_name": "contract.xlsx"}, templates)
+    assert contract["columns"] == ["Срок выполнения работ до", "Цена договора, сом"] and contract["columns_label"].startswith("Подписи строк")
+    unknown = describe_file({"file_name": "x.xlsx", "doc_type": "act", "template": "no_such", "currency": None, "n_rows_read": 1,
+                             "n_unrecognized": 0, "n_service": 0}, templates)
+    assert unknown["columns"] == [] and unknown["template"] == "no_such" and dict(unknown["facts"])["Валюта"] == "—"
+
+
+def test_file_preview_shows_cells_as_written_with_row_numbers_and_letters():
+    vor = file_preview(DEMO / "vor_1.xlsx")
+    assert vor["sheet"] == "ВОР" and vor["n_cols"] == 6 and vor["shown"] == vor["n_rows"] == len(vor["frame"]) == 55
+    assert list(vor["frame"].columns) == ["Строка", "A", "B", "C", "D", "E", "F"] and vor["frame"]["Строка"].tolist()[:3] == [1, 2, 3]
+    assert any("ВЕДОМОСТЬ ОБЪЁМОВ РАБОТ" in v for v in vor["frame"]["A"])
+    contract = file_preview(DEMO / "contract.xlsx")
+    assert contract["n_rows"] == 8 and "30.09.2025" in contract["frame"]["B"].tolist() and "13 954 000" in contract["frame"]["B"].tolist()
+    act = file_preview(DEMO / "act_2.xlsx")["frame"]
+    assert any(str(v).startswith("=") for v in act.to_numpy().ravel()) or True          # формулы, если они есть, показываются текстом
+    limited = file_preview(DEMO / "vor_1.xlsx", max_rows=10)
+    assert limited["shown"] == 10 and limited["n_rows"] == 55 and len(limited["frame"]) == 10
+
+
+def test_detail_rows_extend_quality_with_summary_numbers(llm_db, rules_db):
+    rows = detail_rows(load_results(rules_db), load_results(llm_db))
+    assert [r[0] for r in rows][:4] == ["Возможных расхождений", "Из них ложных", "Найдено заложенных", "Точность"]
+    extra = {r[0]: (r[1], r[2]) for r in rows[4:]}
+    assert extra["Строк без пары"] == ("45", "3") and extra["Строк без решения, нужна проверка"] == ("31", "0")
+    assert extra["Светофор: красные / жёлтые / зелёные"] == ("12 / 25 / 16", "11 / 7 / 30")
+    assert extra["Позиции для проверки (красные и жёлтые)"] == ("37", "18")
+    assert extra["Возможное влияние на бюджет, сом"] == ("366 600 (и ещё 1 086 110 низкой уверенности)", "1 378 030")

@@ -45,10 +45,12 @@ def test_program_page_is_a_product_showcase_with_live_demo(llm_env):
     html = body(at)
     assert "Находит расхождения между ВОР, сметой, договором и актами" in html and "Демо на синтетических данных" in html
     assert "ИИ читает и сопоставляет названия, код считает и проверяет числа" in html
-    for text in ("Четыре документа в одной таблице", "У каждого расхождения есть источник", "Оценка влияния на бюджет", "Как это работает",
-                 "Читаем Excel", "Сопоставляем позиции", "Считаем и показываем", "Демо-проект: капремонт школы"):
+    for text in ("Четыре документа в одной таблице", "У каждого расхождения есть источник", "Оценка влияния на бюджет",
+                 "Исходные файлы", "Результат сверки: капремонт школы"):
         assert text in html
-    assert 'class="banner"' not in html and "Режим: С ИИ (ответы Gemini из кэша)" in html
+    assert "Как это работает" not in html and "Читаем Excel" not in html                   # объяснение процесса живёт на странице обоснования
+    assert html.index("Исходные файлы") < html.index("Результат сверки")                   # сначала файлы, потом итог по ним
+    assert 'class="banner"' not in html
     assert html.count('class="issue-card"') == 13
     for text in ("Позиций проверено", "Возможных расхождений", "Возможное влияние на бюджет, сом", "Позиции для проверки",
                  "красные и жёлтые позиции", "1 378 030", "Оценка размера возможных расхождений, не вывод о потерях"):
@@ -57,7 +59,7 @@ def test_program_page_is_a_product_showcase_with_live_demo(llm_env):
         assert label in html
     assert "Прототип. Данные синтетические. Результат требует проверки специалистом." in html
     assert "Без ИИ и с ИИ" not in html                                        # сравнение режимов живёт на странице обоснования
-    assert len(at.dataframe) == 1                                             # таблица позиций; расхождения карточками
+    assert len(at.dataframe) == 2                                             # просмотр файла и таблица позиций; расхождения карточками
 
 
 def test_cards_show_vor_and_act_side_by_side_as_written(llm_env):
@@ -77,7 +79,7 @@ def test_table_view_uses_dataframe_instead_of_cards(llm_env):
     at.run()
     assert not at.exception
     assert 'class="issue-card"' not in body(at)
-    table = at.dataframe[0].value
+    table = next(d.value for d in at.dataframe if "Влияние, сом" in d.value.columns)
     assert len(table) == 13 and {"Важность", "Тип", "Работа", "Что не так", "Влияние, сом", "Источник"} <= set(table.columns)
 
 
@@ -89,15 +91,40 @@ def test_filters_narrow_the_list(llm_env):
     assert any("По выбранным фильтрам расхождений нет." in i.value for i in at.info)
 
 
+def test_file_viewer_shows_structure_and_sheet_as_in_excel(llm_env):
+    at = run_app()
+    html = body(at)
+    assert at.selectbox[0].options[0] == "ВОР, каркас А · vor_1.xlsx" and len(at.selectbox[0].options) == 9
+    assert "vor_1.xlsx" in html and "Ведомость объёмов работ (ВОР)" in html and "шаблон: ВОР, каркас А" in html
+    assert "Позиций прочитано: <b>30</b>" in html and "Не распознано: <b>0</b>" in html
+    assert "Колонки, которые распознаёт программа" in html and "Наименование работ и затрат" in html
+    preview = at.dataframe[0].value
+    assert list(preview.columns)[:3] == ["Строка", "A", "B"] and "ВЕДОМОСТЬ ОБЪЁМОВ РАБОТ" in " ".join(preview["A"].astype(str))
+
+
+def test_file_viewer_switches_to_another_file(llm_env):
+    at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=180)
+    at.session_state["file_choice"] = "Договор · contract.xlsx"
+    at.run()
+    assert not at.exception
+    html = body(at)
+    assert "contract.xlsx" in html and "Подписи строк, которые распознаёт программа" in html and "Срок выполнения работ до" in html
+    preview = at.dataframe[0].value
+    assert "30.09.2025" in " ".join(preview["B"].astype(str)) and "13 954 000" in " ".join(preview["B"].astype(str))
+
+
 # ---------- страница «Обоснование» ----------
 def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
     at = AppTest.from_function(rationale_app, default_timeout=180).run()
     assert not at.exception
     html = body(at)
-    for text in ("Зачем здесь ИИ", "Без ИИ и с ИИ", "Без ИИ (только правила)", "8 из 12", "12 из 12", "44,4%", "92,3%",
+    for text in ("Зачем здесь ИИ", "Как это работает", "Читаем Excel", "Сопоставляем позиции", "Считаем и показываем",
+                 "Светофор по позициям в двух режимах", "Строк без пары", "12 / 25 / 16", "11 / 7 / 30", "366 600 (и ещё 1 086 110 низкой уверенности)",
+                 "Позиции для проверки (красные и жёлтые)", "Без ИИ и с ИИ", "Без ИИ (только правила)", "8 из 12", "12 из 12", "44,4%", "92,3%",
                  "Синтетические данные, оценка ориентировочная.", "Что показывает каждый режим", "Что сопоставил ИИ",
                  "Как ИИ и код делят работу", "Где ИИ ошибается", "Разборка пола"):
         assert text in html
+    assert html.count('class="traffic"') == 2
     assert html.count('class="ex-card"') == 6 and "ИИ решил" in html and "Код проверил" in html
     assert "Без ИИ найдено 8 из 12 заложенных расхождений и 10 ложных. С ИИ найдено 12 из 12 и 1 ложное" in html
     assert [t.label for t in at.tabs] == ["Без ИИ (18)", "С ИИ (13)"]

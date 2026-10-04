@@ -108,3 +108,12 @@ def test_showcase_components():
     trio = c.trio_html([("А", "а"), ("Б", "б"), ("В", "в")])
     assert trio.count("trio-item") == 3 and ">3<" in trio
     assert 'claim-warn' in c.claim_html("x", warn=True) and 'claim-warn' not in c.claim_html("x")
+
+
+def test_fileinfo_html_shows_role_template_facts_and_columns():
+    info = {"file": "vor_1.xlsx", "role": "Ведомость объёмов работ (ВОР)", "template": "ВОР, каркас А", "columns": ["№ п.п", "Кол-во <x>"],
+            "columns_label": "Колонки, которые распознаёт программа", "facts": [("Позиций прочитано", "30"), ("Не распознано", "0")]}
+    html = c.fileinfo_html(info)
+    assert "vor_1.xlsx" in html and "Ведомость объёмов работ (ВОР)" in html and "шаблон: ВОР, каркас А" in html
+    assert "Позиций прочитано: <b>30</b>" in html and html.count('class="chip"') == 2 and "&lt;x&gt;" in html and "<x>" not in html
+    assert "Колонки, которые распознаёт программа" in html and "\n\n" not in html

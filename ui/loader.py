@@ -20,6 +20,6 @@ def build_demo(mode: str) -> dict:
     db = db_dir / f"demo_{mode}.db"
     summary = run_pipeline(DEMO_DIR, db, mode)
     results = load_results(db)
-    results["files"] = summary["files"]
+    results["n_files"] = summary["files"]      # число прочитанных файлов; results["files"] это таблица файлов
     log.warning("demo built: requested=%s mode=%s files=%s issues=%s", mode, summary["mode"], summary["files"], summary["z"])
     return results

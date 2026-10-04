@@ -8,7 +8,7 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +27,10 @@ STATUS_COLORS = {"red": ("#C62828", "#FFFFFF"), "yellow": ("#F9A825", "#1B1B1B")
 STATUS_ROW_FILL = {"red": "#FDECEA", "yellow": "#FFF6DB", "green": "#E8F5E9"}       # светлые заливки строк таблицы, текст тёмный
 STATUS_PLURAL = {"red": "Красные", "yellow": "Жёлтые", "green": "Зелёные"}
 STATUS_SINGULAR = {"red": "Красный", "yellow": "Жёлтый", "green": "Зелёный"}
+DOC_TYPE_RU = {"vor": "Ведомость объёмов работ (ВОР)", "estimate": "Смета", "contract": "Договор", "act": "Акт выполненных работ"}
+TEMPLATE_RU = {"vor_a": "ВОР, каркас А", "vor_b": "ВОР, каркас Б", "estimate_a": "Смета", "contract_a": "Договор",
+               "act_a": "Акт, форма А", "act_b": "Акт, форма Б", "act_c": "Акт, форма В"}
+PREVIEW_ROWS = 80
 SOURCE_ROLE = {"vor": "ВОР", "estimate": "Смета", "act": "Акт", "contract": "Договор"}
 LOW_CONFIDENCE_NOTE = "Низкая уверенность, требует проверки"
 AI_NOT_FOUND_NOTE = "ИИ не нашёл пару в ВОР, требует проверки"
@@ -77,6 +81,12 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "JOIN staging_match_rows r ON r.group_id = d.group_id JOIN items i ON i.item_id = r.item_id "
             "WHERE d.project_id = ? AND d.outcome = 'none' AND d.confidence >= ?", conn, params=(project_id, min_conf))
         examples = collect_ai_examples(conn, project_id, cfg)
+        files = pd.read_sql_query(
+            "SELECT d.file_name, d.doc_type, d.status, e.template, e.currency, e.n_rows_read, e.n_unrecognized, e.n_service "
+            "FROM documents d JOIN staging_documents_ext e ON e.doc_id = d.doc_id WHERE d.project_id = ? ORDER BY d.doc_id",
+            conn, params=(project_id,))
+        order = {"vor": 0, "estimate": 1, "contract": 2, "act": 3}                  # в списке сначала ВОР, потом смета, договор, акты
+        files = files.assign(_o=files["doc_type"].map(order)).sort_values(["_o", "file_name"]).drop(columns="_o").reset_index(drop=True)
         marks = ",".join("?" for _ in diagnostic)
         documents = pd.read_sql_query(
             "SELECT d.doc_id, d.doc_type, d.file_name, d.status, "
@@ -88,7 +98,7 @@ def load_results(db_path, project_id: str = "demo") -> dict:
     markers = cfg["synonyms"].get("strip_markers", [])
     issues = attach_sides(attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, markers), items, markers)
     return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples),
-            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers)}
+            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers), "files": files}
 
 
 # ---------- форматирование ----------
@@ -164,6 +174,63 @@ def attach_context(issues: pd.DataFrame, items: pd.DataFrame, ai_keys: set) -> p
     issues["sources"] = sources
     issues["ai_matched"] = ai
     return issues
+
+
+# ---------- исходные файлы: каталог, структура, просмотр ----------
+def file_label(row) -> str:
+    """Подпись файла в списке выбора: «ВОР, каркас А · vor_1.xlsx»."""
+    return f"{TEMPLATE_RU.get(row['template'], row['template'])} · {row['file_name']}"
+
+
+def describe_file(row, templates: dict) -> dict:
+    """Структура файла для панели: что это за документ, какой шаблон найден, какие колонки программа распознаёт, что прочитано.
+
+    templates: config/templates.yaml (раздел templates). Колонки берутся из шаблона: первое название каждой колонки без служебных."""
+    tpl = templates.get(row["template"], {})
+    columns = [names[0] for field, names in tpl.get("columns", {}).items() if field != "seq" and names]
+    if tpl.get("columns", {}).get("seq"):
+        columns.insert(0, tpl["columns"]["seq"][0])
+    label = "Колонки, которые распознаёт программа"
+    if not columns and tpl.get("fields"):                       # договор: пары «подпись - значение», а не таблица
+        columns = [names[0] for names in tpl["fields"].values() if names]
+        label = "Подписи строк, которые распознаёт программа"
+    return {"file": row["file_name"], "role": DOC_TYPE_RU.get(row["doc_type"], row["doc_type"]),
+            "template": TEMPLATE_RU.get(row["template"], row["template"]), "columns": columns, "columns_label": label,
+            "facts": [("Позиций прочитано", fmt_num(row["n_rows_read"])), ("Служебных строк", fmt_num(row["n_service"])),
+                      ("Не распознано", fmt_num(row["n_unrecognized"])), ("Валюта", row["currency"] or EMPTY)]}
+
+
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return fmt_num(value)
+    return str(value).strip()
+
+
+def file_preview(path, max_rows: int = PREVIEW_ROWS) -> dict:
+    """Первый лист Excel как в файле: номера строк, буквы колонок, значения и формулы (формулы показываются текстом «=…»).
+
+    -> {sheet, n_rows (до последней непустой строки), n_cols, shown, frame}. Файл только читается."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    wb = load_workbook(path, data_only=False, read_only=True)
+    ws = wb.worksheets[0]
+    rows = [[_cell_text(v) for v in row] for row in ws.iter_rows(values_only=True)]
+    title = ws.title
+    wb.close()
+    while rows and not any(rows[-1]):
+        rows.pop()
+    width = max((max((i for i, v in enumerate(r) if v), default=-1) + 1 for r in rows), default=0)
+    rows = [(r + [""] * width)[:width] for r in rows]
+    shown = rows[:max_rows]
+    frame = pd.DataFrame(shown, columns=[get_column_letter(i + 1) for i in range(width)])
+    frame.insert(0, "Строка", range(1, len(shown) + 1))
+    return {"sheet": title, "n_rows": len(rows), "n_cols": width, "shown": len(shown), "frame": frame}
 
 
 # ---------- «как написано»: что в ВОР и что в акте ----------
@@ -369,6 +436,21 @@ def quality_compare(rules_issues: pd.DataFrame, llm_issues: pd.DataFrame) -> lis
             ("Из них ложных", fmt_num(a["false"]), fmt_num(b["false"])),
             ("Найдено заложенных", f"{a['found']} из {a['gt_total']}", f"{b['found']} из {b['gt_total']}"),
             ("Точность", pct(a), pct(b))]
+
+
+def detail_rows(without_ai: dict, with_ai: dict) -> list:
+    """Подробное сравнение режимов: качество по эталону и числа из summary (строки без пары, светофор, позиции для проверки, влияние)."""
+    rows = quality_compare(without_ai["issues"], with_ai["issues"])
+    sa, sb = without_ai["summary"], with_ai["summary"]
+    ma = headline_metrics(sa, without_ai["issues"], without_ai["positions"])
+    mb = headline_metrics(sb, with_ai["issues"], with_ai["positions"])
+    light = lambda s: " / ".join(str(s["statuses"][k]) for k in ("red", "yellow", "green"))  # noqa: E731
+    impact_a = fmt_num(ma["impact"]) + (f" (и ещё {fmt_num(ma['impact_extra'])} низкой уверенности)" if ma["impact_extra_n"] else "")
+    return rows + [("Строк без пары", fmt_num(sa["k"]), fmt_num(sb["k"])),
+                   ("Строк без решения, нужна проверка", fmt_num(sa["a"]), fmt_num(sb["a"])),
+                   ("Светофор: красные / жёлтые / зелёные", light(sa), light(sb)),
+                   ("Позиции для проверки (красные и жёлтые)", fmt_num(ma["review_positions"]), fmt_num(mb["review_positions"])),
+                   ("Возможное влияние на бюджет, сом", impact_a, fmt_num(mb["impact"]))]
 
 
 # ---------- сводные числа ----------

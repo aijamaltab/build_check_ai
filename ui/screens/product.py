@@ -1,16 +1,19 @@
-"""Страница «Программа»: витрина продукта и живое демо на синтетическом проекте (режим с ИИ, ответы из кэша)."""
+"""Страница «Программа»: продукт для инженеров. Исходные файлы проекта и итог сверки по ним (режим с ИИ, ответы из кэша)."""
+from pathlib import Path
+
 import streamlit as st
 
+from src.config import load_config
 from ui import components as ui
-from ui.data import (TYPE_ORDER, TYPE_RU, build_cards, cards_frame, chart_frames, filter_issues, fmt_num, headline_metrics, positions_view,
-                     sort_issues, traffic_legend, traffic_segments)
-from ui.loader import build_demo
+from ui.data import (TYPE_ORDER, TYPE_RU, build_cards, cards_frame, chart_frames, describe_file, file_label, file_preview, filter_issues,
+                     fmt_num, headline_metrics, positions_view, sort_issues, traffic_legend, traffic_segments)
+from ui.loader import DEMO_DIR, build_demo
 
 SEVERITY_CHOICES = {"Все": "all", "Высокая": "high", "Средняя": "medium", "Низкая": "low"}
 STATUS_CHOICES = {"Все": "all", "Красные": "red", "Жёлтые": "yellow", "Зелёные": "green"}
 HERO_TITLE = "Находит расхождения между ВОР, сметой, договором и актами"
-HERO_LEAD = ("На входе Excel-документы объекта, на выходе список возможных расхождений: превышение объёма, рост цены, "
-             "работа есть в акте, но нет в ВОР, акт после срока договора. У каждого указан файл, лист и строка.")
+HERO_LEAD = ("На входе Excel-документы объекта, на выходе список возможных расхождений с указанием файла, листа и строки. "
+             "Ниже разбор демо-проекта: исходные файлы и итог сверки по ним.")
 AI_NOTE = "ИИ читает и сопоставляет названия, код считает и проверяет числа"
 BENEFITS = [("Четыре документа в одной таблице",
              "ВОР, смета, договор и акты приводятся к единой таблице: единицы измерения и названия работ сопоставляются между документами."),
@@ -18,9 +21,31 @@ BENEFITS = [("Четыре документа в одной таблице",
              "Файл, лист и строка: специалист открывает документ и проверяет сам. Система показывает возможное расхождение, а не выносит вердикт."),
             ("Оценка влияния на бюджет",
              "Возможное влияние в сомах считает код по данным документов. Это оценка размера расхождения, а не вывод о потерях.")]
-STEPS = [("Читаем Excel", "Шаблоны ВОР, сметы, договора и актов читаются по заголовкам колонок, единицы приводятся к одному виду."),
-         ("Сопоставляем позиции", "Одна работа в разных документах названа по-разному. Правила сопоставляют очевидное, ИИ помогает со спорными названиями."),
-         ("Считаем и показываем", "Код сравнивает объёмы, цены и даты по правилам и собирает список возможных расхождений для проверки.")]
+
+
+def render_files(results: dict) -> None:
+    """Выбор файла проекта: структура (документ, шаблон, колонки, что прочитано) и сам лист как в Excel."""
+    ui.render(ui.section_html("Исходные файлы", f"Девять Excel-файлов демо-проекта: ВОР, смета, договор и акты. Выберите файл, чтобы увидеть, "
+                                                "как он выглядит и что программа в нём распознала."))
+    files = results["files"]
+    if files.empty:
+        st.info("Список файлов недоступен.")
+        return
+    labels = [file_label(r) for _, r in files.iterrows()]
+    choice = st.selectbox("Файл", labels, key="file_choice", label_visibility="collapsed")
+    row = files.iloc[labels.index(choice)]
+    ui.render(ui.fileinfo_html(describe_file(row, load_config()["templates"])))
+    path = Path(DEMO_DIR) / row["file_name"]
+    if not path.exists():
+        st.info("Файл для просмотра не найден.")
+        return
+    preview = file_preview(path)
+    st.caption(f"Лист «{preview['sheet']}», как в файле: показаны строки 1–{preview['shown']} из {preview['n_rows']}, колонки A–"
+               f"{preview['frame'].columns[-1] if preview['n_cols'] else 'A'}. Цифры слева это номера строк Excel.")
+    letters = [c for c in preview["frame"].columns if c != "Строка"]
+    ui.stretch(st.dataframe, preview["frame"], hide_index=True, height=min(520, 36 * preview["shown"] + 44),
+               column_config={"Строка": st.column_config.NumberColumn("Строка", width="small"),
+                              **{c: st.column_config.TextColumn(c, width="medium") for c in letters}})
 
 
 def render(rationale_page=None) -> None:
@@ -29,23 +54,20 @@ def render(rationale_page=None) -> None:
     if rationale_page is not None:
         st.page_link(rationale_page, label="Почему здесь нужен ИИ: сравнение с ИИ и без →")
 
-    ui.render(ui.section_html("Как это работает"))
-    ui.render(ui.trio_html(STEPS))
-
     try:
         results = build_demo("llm")
     except Exception:  # noqa: BLE001: пользователю человеческая ошибка, подробности в логе
         st.error("Не удалось собрать результат из демо-проекта. Обновите страницу; если ошибка повторяется, сообщите разработчикам.")
         return
     summary, issues, positions = results["summary"], results["issues"], results["positions"]
-    if not results["files"] or not summary:
+    if not results["n_files"] or not summary:
         st.error("Файлы демо-проекта не найдены, сверять нечего.")
         return
     actual = summary["mode"]
 
-    ui.render(ui.section_html("Демо-проект: капремонт школы", "Синтетические документы. Так выглядит результат сверки."))
-    mode_line = "Режим: С ИИ (ответы Gemini из кэша)" if actual == "llm" else "Режим: Без ИИ (только правила)"
-    ui.render(f'<div class="mode-line">{mode_line}</div>')
+    render_files(results)
+
+    ui.render(ui.section_html("Результат сверки: капремонт школы", "Итог по всем девяти файлам. Документы синтетические."))
     if actual != "llm":                                  # кэша нет: pipeline сам перешёл на правила
         ui.render(ui.banner_html(summary["banner"] or "ИИ-режим недоступен, использован базовый режим"))
 

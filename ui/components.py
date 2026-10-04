@@ -70,6 +70,16 @@ def badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{escape(text)}</span>'
 
 
+def fileinfo_html(info: dict) -> str:
+    """Структура выбранного файла: роль документа, найденный шаблон, колонки, которые распознаёт программа, итоги чтения."""
+    facts = "".join(f"<span>{escape(k)}: <b>{escape(str(v))}</b></span>" for k, v in info["facts"])
+    chips = "".join(f'<span class="chip">{escape(c)}</span>' for c in info["columns"])
+    return ('<div class="fileinfo"><div class="fileinfo-head">'
+            f'<span class="fileinfo-name">{escape(info["file"])}</span>{badge(info["role"])}{badge("шаблон: " + info["template"], "badge-ai")}</div>'
+            f'<div class="fileinfo-facts">{facts}</div>'
+            f'<div class="side-label">{escape(info["columns_label"])}</div><div class="chips">{chips}</div></div>')
+
+
 # ---------- карточка расхождения ----------
 def sides_html(sides: dict) -> str:
     """Что в ВОР (смете, договоре) и что в акте, как написано: две панели рядом (на телефоне друг под другом)."""

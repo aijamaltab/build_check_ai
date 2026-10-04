@@ -74,12 +74,19 @@ h1, h2, h3, .hero-title, .section-title, .page-title { font-family: var(--serif)
 .cmp-title { font-family: var(--serif); color: var(--ink); font-weight: 700; font-size: 1.2rem; margin-bottom: 6px; }
 .cmp-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 0.97rem; }
 .cmp-label { color: var(--muted); }
-.cmp-value { color: var(--ink); font-weight: 700; white-space: nowrap; }
+.cmp-value { color: var(--ink); font-weight: 700; text-align: right; }
 .ex-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 0.6rem; }
 .ex-card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
 .ex-row { display: flex; flex-direction: column; margin: 0 0 8px 0; font-size: 0.88rem; color: var(--ink); overflow-wrap: anywhere; }
 .ex-label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .ex-ai { background: var(--accent-soft); border-radius: 8px; padding: 4px 8px; }
+.fileinfo { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px; margin: 0.6rem 0 0.6rem 0; }
+.fileinfo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.fileinfo-name { font-family: var(--serif); font-weight: 700; font-size: 1.2rem; }
+.fileinfo-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 6px 0; color: var(--muted); font-size: 0.9rem; }
+.fileinfo-facts b { color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chip { background: var(--vor); border: 1px solid var(--vor-line); border-radius: 6px; padding: 2px 9px; font-size: 0.84rem; color: var(--ink); }
 .claim { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); padding: 12px 16px; margin: 0.8rem 0; font-size: 1rem; line-height: 1.5; }
 .claim-warn { border-left-color: #B5792F; }
 .app-footer { color: var(--muted); font-size: 0.84rem; text-align: center; margin-top: 2rem; padding-top: 0.9rem; border-top: 1px solid var(--line); }
