@@ -67,8 +67,15 @@ CREATE TABLE IF NOT EXISTS staging_match_candidates (
 TABLES_BY_ITEM = ("staging_match_rows",)
 
 
+# колонки, добавленные после первой версии схемы: в старых базах (data/cache/demo.db) их нужно дописать
+ADDED_COLUMNS = (("staging_match_rows", "state", "TEXT"), ("staging_matches_ext", "state", "TEXT DEFAULT 'matched'"))
+
+
 def init_match_tables(conn) -> None:
     conn.executescript(SCHEMA)
+    for table, column, ddl in ADDED_COLUMNS:
+        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     conn.commit()
 
 

@@ -35,8 +35,8 @@ def prepared(tmp_path_factory):
 def test_match_script_prints_methods_candidates_unmatched_for_both_thresholds(prepared):
     out = subprocess.run([sys.executable, str(ROOT / "scripts" / "match.py"), "--db", str(prepared["db"]), "--mode", "rules_only"],
                          capture_output=True, text=True, encoding="utf-8", check=True).stdout
-    for phrase in ("порог 85", "порог 90", "exact", "fuzzy", "llm", "в кандидатах для LLM", "не сопоставлено",
-                   "Не сопоставлено (файл:лист:строка)", "act_3.xlsx:Акт:"):
+    for phrase in ("порог 85", "порог 90", "exact", "fuzzy", "llm", "ambiguous", "absent", "Сводка: Проверено",
+                   "требует проверки", "кандидат на missing_in_vor", "Не сопоставлено (файл:лист:строка)", "act_3.xlsx:Акт:"):
         assert phrase in out, phrase
     conn = get_connection(prepared["db"])
     assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] > 0
