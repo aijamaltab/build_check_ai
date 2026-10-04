@@ -7,25 +7,45 @@
 """
 
 
+def _q(text: str) -> str:
+    """Строка для SQL-литерала."""
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def _clean_name(expr: str, markers) -> str:
+    """Название для показа: исходное название строки без служебных пометок (strip_markers из synonyms.yaml, например «/прим/»)."""
+    for marker in markers:
+        expr = f"REPLACE({expr}, {_q(marker)}, '')"
+    return f"TRIM({expr})"
+
+
 def create_views(conn, cfg: dict) -> None:
     rules = cfg["rules"]
+    # единица для показа: тот же словарь, что у issues_view.unit (rules.yaml, issues.unit_labels); неизвестная остаётся как есть
+    labels = rules["issues"]["unit_labels"]
+    whens = " ".join(f"WHEN {_q(k)} THEN {_q(v)}" for k, v in labels.items())
+    unit_label = f"CASE {{u}} {whens} ELSE COALESCE({{u}}, '') END"
+    markers = cfg["synonyms"].get("strip_markers", [])
+    name_of = _clean_name("(SELECT i.work_name_raw FROM items i WHERE i.item_id = {first})", markers)
     over = 100 + rules["volume_exceeded"]["tolerance_pct"]            # выше: красный по объёму
     under = 100 - rules["position_status"]["green_under_tolerance_pct"]   # ниже: жёлтый (работа идёт)
     issue_types = "'volume_exceeded', 'price_increase', 'missing_in_vor'"
     conn.executescript(f"""
 DROP VIEW IF EXISTS position_status;
 CREATE VIEW position_status AS
-SELECT project_id, work_key, unit, plan_qty, fact_qty, pct,
+SELECT project_id, work_key, name, unit, unit_label, plan_qty, fact_qty, pct,
        CASE WHEN has_issue = 1 OR pct > {over} THEN 'red'
             WHEN pct < {under} THEN 'yellow'
             ELSE 'green' END AS status,
        review_rows
 FROM (
-    SELECT project_id, work_key, unit, plan_qty, fact_qty, has_issue, review_rows,
+    SELECT project_id, work_key, name, unit, unit_label, plan_qty, fact_qty, has_issue, review_rows,
            CASE WHEN plan_qty IS NULL OR plan_qty = 0 THEN NULL ELSE fact_qty * 100.0 / plan_qty END AS pct
     FROM (
         -- позиции ВОР: план и накопительный факт по актам, привязанным к этой позиции
-        SELECT p.project_id AS project_id, p.final_work_key AS work_key, p.unit_norm AS unit, p.qty_sum AS plan_qty,
+        -- name: исходное название первой по порядку строки ВОР с этим ключом (без пометок вроде «/прим/»)
+        SELECT p.project_id AS project_id, p.final_work_key AS work_key, {name_of.format(first="p.first_item_id")} AS name,
+               p.unit_norm AS unit, {unit_label.format(u="p.unit_norm")} AS unit_label, p.qty_sum AS plan_qty,
                COALESCE((SELECT SUM(a.qty_sum) FROM staging_match_groups a
                          WHERE a.doc_type = 'act' AND a.status = 'matched' AND a.matched_group_id = p.group_id), 0) AS fact_qty,
                EXISTS(SELECT 1 FROM issues i WHERE i.project_id = p.project_id AND i.work_key = p.final_work_key
@@ -37,9 +57,13 @@ FROM (
         FROM staging_match_groups p WHERE p.doc_type = 'vor'
         UNION ALL
         -- позиции только в актах (absent): плана нет, issue missing_in_vor есть
-        SELECT g.project_id, g.final_work_key, g.unit_norm, NULL, SUM(g.qty_sum), 1, 0
-        FROM staging_match_groups g WHERE g.doc_type = 'act' AND g.status = 'absent'
-        GROUP BY g.project_id, g.final_work_key, g.unit_norm
+        -- name: название первой по порядку строки акта с этим ключом
+        SELECT a.project_id, a.work_key, {name_of.format(first="a.first_id")}, a.unit,
+               {unit_label.format(u="a.unit")}, NULL, a.qty, 1, 0
+        FROM (SELECT g.project_id AS project_id, g.final_work_key AS work_key, g.unit_norm AS unit, SUM(g.qty_sum) AS qty,
+                     MIN(g.first_item_id) AS first_id
+              FROM staging_match_groups g WHERE g.doc_type = 'act' AND g.status = 'absent'
+              GROUP BY g.project_id, g.final_work_key, g.unit_norm) a
     )
 );
 
