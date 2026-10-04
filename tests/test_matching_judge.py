@@ -77,7 +77,7 @@ def test_candidates_table_contract(db):
     assert per_row <= M["llm_candidates_per_row"]
     # кандидаты только у несопоставленных групп
     assert q(conn, "SELECT COUNT(*) FROM staging_match_candidates c JOIN staging_match_groups g ON g.group_id = c.group_id "
-                   "WHERE g.status != 'unmatched'") == [(0,)]
+                   "WHERE g.status != 'ambiguous'") == [(0,)]
 
 
 def test_kind_unknown_dq_is_diagnostic_not_issue(db):
@@ -132,9 +132,9 @@ def test_fake_judge_accepts_a_given_pair_and_saves_reason(db, synth):
 
 def test_truth_judge_resolves_without_false_merges_and_each_row_once(db, synth):
     conn, result = db
-    before = q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'unmatched'")[0][0]
+    before = q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status IN ('ambiguous', 'absent')")[0][0]
     resolve_candidates(conn, TruthJudge(synth[1]), CFG, "demo")
-    after = q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'unmatched'")[0][0]
+    after = q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status IN ('ambiguous', 'absent')")[0][0]
     assert after < before
     llm = q(conn, "SELECT a.source_file, a.source_row, v.source_file, v.source_row FROM matches m JOIN items a ON a.item_id = m.item_id "
                   "JOIN items v ON v.item_id = m.matched_to_item_id WHERE m.method = 'llm'")
@@ -177,7 +177,7 @@ def test_resolve_vetoes_numeric_conflict_even_if_judge_says_yes(db):
     """Прямой тест veto: кандидат d8 -> d12 вставлен вручную, судья отвечает «да» с уверенностью 1."""
     conn, _ = db
     d8 = conn.execute("SELECT group_id, first_item_id FROM staging_match_groups WHERE name = 'арматура гладкая d8' "
-                      "AND status = 'unmatched' LIMIT 1").fetchone()
+                      "AND status = 'ambiguous' LIMIT 1").fetchone()
     d12 = conn.execute("SELECT group_id, first_item_id FROM staging_match_groups WHERE doc_type = 'vor' AND name = 'арматура а500 d12'").fetchone()
     conn.execute("DELETE FROM staging_match_candidates")
     # строка ВОР d12 в этом акте занята своей парой; для теста освобождаем её, иначе кандидат будет superseded
@@ -196,3 +196,49 @@ def test_resolve_vetoes_numeric_conflict_even_if_judge_says_yes(db):
     assert (stats.asked, stats.vetoed, stats.accepted) == (1, 1, 0)
     assert q(conn, "SELECT status FROM staging_match_candidates") == [("vetoed",)]
     assert q(conn, "SELECT COUNT(*) FROM matches WHERE method = 'llm'") == [(0,)]
+
+
+# ---------- три состояния в БД ----------
+def test_states_are_stored_for_every_row(db):
+    conn, result = db
+    assert {s for (s,) in q(conn, "SELECT DISTINCT status FROM staging_match_groups")} == {"vor", "matched", "ambiguous", "absent"}
+    assert q(conn, "SELECT COUNT(*) FROM staging_match_rows WHERE state IS NULL AND group_id IN "
+                   "(SELECT group_id FROM staging_match_groups WHERE doc_type != 'vor')") == [(0,)]
+    # у строк ВОР состояния нет, у сопоставленных строк в staging_matches_ext state = matched
+    assert q(conn, "SELECT COUNT(*) FROM staging_match_rows r JOIN staging_match_groups g USING(group_id) "
+                   "WHERE g.doc_type = 'vor' AND r.state IS NOT NULL") == [(0,)]
+    assert q(conn, "SELECT DISTINCT state FROM staging_matches_ext") == [("matched",)]
+    assert len(result.absent) == q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'absent'")[0][0]
+
+
+def test_ambiguous_goes_to_dq_and_summary_but_not_to_issues(db):
+    conn, _ = db
+    name = M["ambiguous_dq_check"]
+    dq_rows = q(conn, "SELECT passed, details FROM dq_checks WHERE check_name = ?", name)
+    assert dq_rows and all(p == 0 for p, _ in dq_rows)
+    n_amb = q(conn, "SELECT COUNT(*) FROM staging_match_rows WHERE state = 'ambiguous'")[0][0]
+    assert sum(int(d.split(";")[0].split(":")[1]) for _, d in dq_rows) == n_amb
+    assert q(conn, "SELECT COUNT(*) FROM issues") == [(0,)]
+    from src.matching.store import summary_counts, summary_line
+    c = summary_counts(conn, "demo")
+    assert c["n"] == 180 and c["a"] == n_amb and c["k"] == n_amb + q(conn, "SELECT COUNT(*) FROM staging_match_rows WHERE state = 'absent'")[0][0]
+    assert summary_line(conn, "demo", CFG) == (f"Проверено {c['n']} позиций, не распознано {c['m']}, не сопоставлено {c['k']}, "
+                                               f"из них требует проверки {c['a']}, не сопоставимо {c['l']}")
+
+
+def test_judge_rejecting_all_candidates_makes_row_absent_but_noop_keeps_it_ambiguous(db, synth):
+    conn, _ = db
+    before = q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'ambiguous'")[0][0]
+    resolve_candidates(conn, NoopJudge(), CFG, "demo")
+    assert q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'ambiguous'")[0][0] == before
+
+    class SaysNo:
+        available = True
+
+        def judge_pair(self, a, b, context):
+            return {"same_work": False, "confidence": 0.99, "reason": "разные работы"}
+
+    resolve_candidates(conn, SaysNo(), CFG, "demo")
+    assert q(conn, "SELECT COUNT(*) FROM staging_match_groups WHERE status = 'ambiguous'")[0][0] == 0
+    assert q(conn, "SELECT COUNT(*) FROM staging_match_rows WHERE state = 'ambiguous'")[0][0] == 0
+    assert q(conn, "SELECT COUNT(*) FROM dq_checks WHERE check_name = ?", M["ambiguous_dq_check"]) == [(0,)]

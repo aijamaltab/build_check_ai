@@ -61,7 +61,7 @@ def test_compare_metrics_add_up_and_show_known_false_merge(prepared):
     assert m["rows"] == 130 == m["correct"] + m["wrong"] + m["true_missing"] + m["false_unmatched"]
     assert m["true_missing"] == 2                                            # отмостка и видеонаблюдение: пары в ВОР нет
     assert m["cand_right"] + m["cand_wrong"] + m["cand_none"] == m["false_unmatched"]
-    assert m["wrong"] == 1 and m["wrong_pairs"][0][:2] == ("act_3.xlsx", 24)  # известная склейка материала кабеля
+    assert m["wrong"] == 0 and m["wrong_pairs"] == []                         # правило «подмножество» убрало склейку кабеля
     assert m["vor_mixed"] == []                                              # внутри ВОР разные работы не слиплись
 
 

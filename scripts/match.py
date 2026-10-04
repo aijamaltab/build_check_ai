@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from src.config import load_config  # noqa: E402
 from src.db import get_connection  # noqa: E402
 from src.matching import NoopJudge, compute_matching, load_rows, resolve_candidates, save_matching  # noqa: E402
+from src.matching.store import summary_line  # noqa: E402
 
 
 def stats_line(res) -> str:
@@ -24,13 +25,12 @@ def stats_line(res) -> str:
     for p in res.pairs:
         by_method[p.method] += len(p.doc.rows)
         by_stage[p.stage] += len(p.doc.rows)
-    cand_groups = {c.doc.gid for c in res.candidates}
-    cand_rows = sum(len(g.rows) for g in res.unmatched if g.gid in cand_groups)
-    unmatched_rows = sum(len(g.rows) for g in res.unmatched)
+    amb_rows = sum(len(g.rows) for g in res.ambiguous)
+    abs_rows = sum(len(g.rows) for g in res.absent)
     return (f"сопоставлено строк: exact {by_method['exact']} (из них по словарю {by_stage['synonyms']}), "
-            f"fuzzy {by_method['fuzzy']}, llm {by_method['llm']}; в кандидатах для LLM {cand_rows} строк "
-            f"({len(cand_groups)} групп); не сопоставлено {unmatched_rows} строк ({len(res.unmatched)} групп); "
-            f"заблокировано числовыми токенами пар: {len(res.blocked)}")
+            f"fuzzy {by_method['fuzzy']}, llm {by_method['llm']}; ambiguous (есть кандидаты для LLM, без LLM не решено) "
+            f"{amb_rows} строк ({len(res.ambiguous)} групп); absent (кандидатов нет, кандидат на missing_in_vor) "
+            f"{abs_rows} строк ({len(res.absent)} групп); заблокировано числовыми токенами пар: {len(res.blocked)}")
 
 
 def main() -> int:
@@ -62,11 +62,12 @@ def main() -> int:
     judge_stats = resolve_candidates(conn, NoopJudge(), cfg, args.project)
     print(f"\nЗаписано в БД (порог {args.threshold:g}): {stats_line(result)}")
     print(f"Судья: {judge_stats.skipped} кандидатов не разбирались (судья недоступен)")
+    print("Сводка:", summary_line(conn, args.project, cfg))
     print("\nНе сопоставлено (файл:лист:строка), для порога", f"{args.threshold:g}:")
     for g in result.unmatched:
-        has = any(c.doc.gid == g.gid for c in result.candidates)
+        state = result.state_of(g)
         refs = ", ".join(f"{r.file}:{r.sheet}:{r.source_row}" for r in g.rows)
-        print(f"  {refs}  «{g.first.name_raw}»  {'[кандидат для LLM]' if has else '[кандидатов нет]'}")
+        print(f"  {refs}  «{g.first.name_raw}»  [{state}{': требует проверки' if state == 'ambiguous' else ': кандидат на missing_in_vor'}]")
     conn.close()
     return 0
 

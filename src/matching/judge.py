@@ -38,6 +38,18 @@ class ResolveStats:
     skipped: int = 0                # судья недоступен: кандидаты не тронуты
 
 
+def demote_judged_ambiguous(conn, project_id: str) -> None:
+    """Судья отклонил все кандидаты строки (и открытых не осталось): она absent, то есть кандидат на missing_in_vor.
+    Строки с невалидными ответами судьи остаются ambiguous (решения не было)."""
+    groups = conn.execute("SELECT group_id FROM staging_match_groups WHERE project_id = ? AND status = 'ambiguous'",
+                          (project_id,)).fetchall()
+    for g in groups:
+        statuses = {r[0] for r in conn.execute("SELECT status FROM staging_match_candidates WHERE group_id = ?", (g["group_id"],))}
+        if statuses and not statuses & {"open", "invalid", "accepted"} and statuses & {"rejected", "vetoed"}:
+            conn.execute("UPDATE staging_match_groups SET status = 'absent' WHERE group_id = ?", (g["group_id"],))
+            conn.execute("UPDATE staging_match_rows SET state = 'absent' WHERE group_id = ?", (g["group_id"],))
+
+
 def _valid(answer) -> bool:
     return (isinstance(answer, dict) and isinstance(answer.get("same_work"), bool)
             and isinstance(answer.get("confidence"), (int, float)) and not isinstance(answer.get("confidence"), bool)
@@ -69,7 +81,7 @@ def resolve_candidates(conn, judge: PairJudge, cfg: dict, project_id: str) -> Re
         vor = conn.execute("SELECT * FROM staging_match_groups WHERE group_id = ?", (cand["candidate_group_id"],)).fetchone()
         taken = conn.execute("SELECT 1 FROM staging_match_groups WHERE doc_id = ? AND matched_group_id = ?",
                              (doc["doc_id"], vor["group_id"])).fetchone()
-        if doc["status"] != "unmatched" or taken:
+        if doc["status"] != "ambiguous" or taken:
             conn.execute("UPDATE staging_match_candidates SET status = 'superseded' WHERE candidate_id = ?", (cand["candidate_id"],))
             stats.superseded += 1
             continue
@@ -98,16 +110,18 @@ def resolve_candidates(conn, judge: PairJudge, cfg: dict, project_id: str) -> Re
         for row in conn.execute("SELECT item_id FROM staging_match_rows WHERE group_id = ?", (doc["group_id"],)).fetchall():
             mid = conn.execute("INSERT INTO matches (work_key, item_id, matched_to_item_id, score, method) VALUES (?,?,?,?,'llm')",
                                (key, row["item_id"], vor["first_item_id"], cand["score"])).lastrowid
-            conn.execute("INSERT INTO staging_matches_ext VALUES (?,?,?,?,?,?)",
-                         (mid, doc["group_id"], "llm", vor["kind"], answer["reason"], answer["confidence"]))
+            conn.execute("INSERT INTO staging_matches_ext (match_id, group_id, state, stage, kind, reason, confidence) "
+                         "VALUES (?,?,'matched','llm',?,?,?)", (mid, doc["group_id"], vor["kind"], answer["reason"], answer["confidence"]))
         conn.execute("UPDATE staging_match_groups SET status = 'matched', matched_group_id = ?, kind = ? WHERE group_id = ?",
                      (vor["group_id"], vor["kind"], doc["group_id"]))
+        conn.execute("UPDATE staging_match_rows SET state = 'matched' WHERE group_id = ?", (doc["group_id"],))
         set_final_key(conn, doc["group_id"], key)
         conn.execute("UPDATE staging_match_candidates SET status = 'superseded' WHERE project_id = ? AND status = 'open' "
                      "AND (group_id = ? OR (candidate_group_id = ? AND group_id IN "
                      "(SELECT group_id FROM staging_match_groups WHERE doc_id = ?)))",
                      (project_id, doc["group_id"], vor["group_id"], doc["doc_id"]))
         stats.accepted += 1
+    demote_judged_ambiguous(conn, project_id)
     refresh_kind_dq(conn, project_id, cfg)
     conn.commit()
     return stats

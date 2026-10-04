@@ -201,22 +201,77 @@ def test_real_data_work_and_material_pairs_follow_truth(project):
             assert truth_of(p.vor, project["truth"]) == {item}
 
 
-def test_threshold_85_and_90_both_have_no_false_merges_except_known_case(project):
-    """Ложные склейки на синтетике: по эталону генератора она одна и известна (см. следующий тест)."""
-    for threshold in M and CFG["rules"]["evaluate"]["thresholds"]:
+def test_no_false_merges_at_both_thresholds(project):
+    """Ложные склейки по эталону генератора: нет ни при пороге 85, ни при 90 (с правилом «подмножество»)."""
+    for threshold in CFG["rules"]["evaluate"]["thresholds"]:
         res = compute_matching(project["rows"], CFG, threshold=threshold)
         wrong = [(p.doc.first.file, p.doc.first.source_row) for p in res.pairs
                  if truth_of(p.doc, project["truth"]) != truth_of(p.vor, project["truth"])]
-        assert wrong == [("act_3.xlsx", 24)], (threshold, wrong)
+        assert wrong == [], (threshold, wrong)
 
 
-def test_known_false_merge_cable_material_to_work(project):
-    """ИЗВЕСТНАЯ ПРОБЛЕМА (не скрываем): материал акта «Кабель ВВГ-нг 3х2,5» (единица «м», признака материала нет)
-    — строгое подмножество слов работы «Кабель ВВГ-нг 3х2.5 прокладка», token_set_ratio = 100. Жадный выбор берёт
-    самую высокую оценку первой, и материал занимает работу ВОР. Оптимальное назначение (97,3 + 90,9 против 100 + 68,2)
-    разрешило бы это верно, но спецификация требует жадного. Когда проблему решат, этот тест нужно обновить."""
+# ---------- правило «подмножество» (subset_review_below) ----------
+def cfg_with(**overrides):
+    import copy
+    cfg = copy.deepcopy(CFG)
+    cfg["rules"]["matching"].update(overrides)
+    return cfg
+
+
+def test_subset_rule_cable_material_goes_to_review_not_to_work(project):
+    """Раньше (известная ложная склейка): материал акта «Кабель ВВГ-нг 3х2,5» (единица «м», признака нет) — подмножество слов
+    работы «Кабель ВВГ-нг 3х2.5 прокладка», token_set_ratio = 100, и жадный выбор отдавал ему работу ВОР.
+    Теперь пара с token_sort_ratio ниже subset_review_below и конкурентом другого kind не склеивается автоматически."""
     res = compute_matching(project["rows"], CFG)
-    bad = [p for p in res.pairs if truth_of(p.doc, project["truth"]) != truth_of(p.vor, project["truth"])]
-    assert len(bad) == 1
-    assert truth_of(bad[0].doc, project["truth"]) == {"M36"} and truth_of(bad[0].vor, project["truth"]) == {"36"}
-    assert bad[0].score == 100
+    act3 = [g for g in res.groups if g.first.file == "act_3.xlsx" and truth_of(g, project["truth"]) == {"M36"}][0]
+    assert res.pair_of(act3.gid) is None or truth_of(res.pair_of(act3.gid).vor, project["truth"]) == {"M36"}
+    work = next(g for g in res.groups if g.is_vor and truth_of(g, project["truth"]) == {"36"})
+    pair = res.pair_of(act3.gid)
+    assert pair is None or pair.vor.gid != work.gid
+    # а при отключённом правиле та же склейка возвращается (это то, что правило предотвращает)
+    off = compute_matching(project["rows"], cfg_with(subset_review_below=0))
+    bad = [p for p in off.pairs if truth_of(p.doc, project["truth"]) != truth_of(p.vor, project["truth"])]
+    assert len(bad) == 1 and truth_of(bad[0].doc, project["truth"]) == {"M36"} and bad[0].score == 100
+
+
+def test_subset_rule_led_lamps_against_work_with_installation():
+    """«Светильники LED» против «Светильники LED монтаж»: token_set = 100, token_sort ниже порога подмножества."""
+    vor_work = row(1, "светильники led монтаж", unit="pcs", kind="work")
+    act = row(3, "светильники led", unit="pcs", kind="work", doc_id=2, doc_type="act")
+    res = compute_matching([vor_work, act], cfg_with(subset_review_scope="always"))
+    assert res.pairs == [] and "подмножество" in res.candidates[0].reason and res.state_of(res.unmatched[0]) == "ambiguous"
+    # режим competitor: без материала-конкурента в ВОР пара склеивается (это обычное короткое название работы)
+    assert len(compute_matching([vor_work, act], CFG).pairs) == 1
+    # с конкурентом другого kind (материал «светильники led секционные») пара уходит на проверку
+    vor_material = row(2, "светильники led секционные", unit="pcs", kind="material")
+    res = compute_matching([vor_work, vor_material, act], CFG)
+    assert [p.vor.first.item_id for p in res.pairs] != [1]
+    assert res.state_of(res.unmatched[0]) == "ambiguous" or res.pairs[0].vor.first.item_id == 2
+
+
+def test_subset_rule_off_in_baseline_mode_and_for_equal_names():
+    vor = row(1, "светильники led монтаж", unit="pcs")
+    act = row(3, "светильники led", unit="pcs", doc_id=2, doc_type="act")
+    assert len(compute_matching([vor, act], CFG, use_synonyms=False, threshold=85).pairs) == 1   # базовая линия без правила
+    same = row(4, "светильники led монтаж", unit="pcs", doc_id=3, doc_type="act")
+    assert compute_matching([vor, same], cfg_with(subset_review_scope="always")).pairs[0].stage == "exact"
+
+
+# ---------- три состояния ----------
+def test_states_matched_ambiguous_absent():
+    vor = [row(1, "кладка стен", unit="m3"), row(2, "утепление фасада плитами", unit="m2")]
+    act = [row(3, "кладка стен", unit="m3", doc_id=2, doc_type="act"),                    # matched
+           row(4, "утепл. фасада минватой", unit="m2", doc_id=2, doc_type="act"),         # похоже: есть кандидат -> ambiguous
+           row(5, "видеонаблюдение система", unit="set", doc_id=2, doc_type="act")]       # ничего похожего -> absent
+    res = compute_matching(vor + act, CFG)
+    states = {g.first.item_id: res.state_of(g) for g in res.groups if not g.is_vor}
+    assert states == {3: "matched", 4: "ambiguous", 5: "absent"}
+    assert [g.first.item_id for g in res.absent] == [5] and [g.first.item_id for g in res.ambiguous] == [4]
+
+
+def test_only_absent_is_a_missing_in_vor_candidate_in_real_data(project):
+    res = compute_matching(project["rows"], CFG)
+    true_missing = {g.first.item_id for g in res.groups if not g.is_vor and truth_of(g, project["truth"]) <= {"X1", "X2"}}
+    absent = {g.first.item_id for g in res.absent}
+    assert true_missing <= absent                      # отмостка и видеонаблюдение ловятся как absent
+    assert CFG["rules"]["matching"]["unmatched_issue_only_state"] == "absent"

@@ -37,11 +37,13 @@ CREATE TABLE IF NOT EXISTS staging_match_groups (
 CREATE TABLE IF NOT EXISTS staging_match_rows (
     item_id   INTEGER PRIMARY KEY REFERENCES items(item_id),
     group_id  INTEGER,
-    counted   INTEGER
+    counted   INTEGER,
+    state     TEXT                      -- matched | ambiguous | absent (у строк ВОР пусто)
 );
 CREATE TABLE IF NOT EXISTS staging_matches_ext (
     match_id    INTEGER PRIMARY KEY REFERENCES matches(match_id),
     group_id    INTEGER,
+    state       TEXT DEFAULT 'matched',  -- у несопоставленных строк записи в matches нет, их состояние в staging_match_rows
     stage       TEXT,
     kind        TEXT,
     reason      TEXT,
@@ -80,8 +82,8 @@ def clear_matching(conn, project_id: str, cfg: dict) -> None:
     conn.execute(f"DELETE FROM staging_match_rows WHERE item_id IN ({items})", (project_id,))
     for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run"):
         conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
-    conn.execute(f"DELETE FROM dq_checks WHERE check_name = ? AND doc_id IN ({docs})",
-                 (cfg["rules"]["matching"]["kind_unknown_dq_check"], project_id))
+    names = (cfg["rules"]["matching"]["kind_unknown_dq_check"], cfg["rules"]["matching"]["ambiguous_dq_check"])
+    conn.execute(f"DELETE FROM dq_checks WHERE check_name IN (?, ?) AND doc_id IN ({docs})", (*names, project_id))
 
 
 def work_key(cfg: dict, kind: str, name: str, unit) -> str:
@@ -89,20 +91,48 @@ def work_key(cfg: dict, kind: str, name: str, unit) -> str:
 
 
 def refresh_kind_dq(conn, project_id: str, cfg: dict) -> None:
-    """dq «kind не определён»: несопоставленные строки вне ВОР без признака получают work (диагностика, не расхождение)."""
-    name = cfg["rules"]["matching"]["kind_unknown_dq_check"]
+    """dq-диагностика по несопоставленным строкам вне ВОР (это не расхождения, в issues не попадают):
+    «kind не определён» (нет признака kind: получают work) и «не сопоставлено, требует проверки» (состояние ambiguous)."""
+    m = cfg["rules"]["matching"]
     docs = "SELECT doc_id FROM documents WHERE project_id = ?"
-    conn.execute(f"DELETE FROM dq_checks WHERE check_name = ? AND doc_id IN ({docs})", (name, project_id))
-    rows = conn.execute(
-        "SELECT g.doc_id, i.source_row FROM staging_match_groups g JOIN staging_match_rows r ON r.group_id = g.group_id "
-        "JOIN items i ON i.item_id = r.item_id WHERE g.project_id = ? AND g.doc_type != 'vor' AND g.status = 'unmatched' "
-        "AND g.signal IS NULL ORDER BY g.doc_id, i.source_row", (project_id,)).fetchall()
-    by_doc = {}
-    for r in rows:
-        by_doc.setdefault(r["doc_id"], []).append(r["source_row"])
-    for doc_id, nums in by_doc.items():
-        conn.execute("INSERT INTO dq_checks (doc_id, check_name, passed, details) VALUES (?,?,?,?)",
-                     (doc_id, name, 0, f"строк: {len(nums)}; строки " + ", ".join(map(str, nums[:30]))))
+    names = (m["kind_unknown_dq_check"], m["ambiguous_dq_check"])
+    conn.execute(f"DELETE FROM dq_checks WHERE check_name IN (?, ?) AND doc_id IN ({docs})", (*names, project_id))
+
+    def rows_by_doc(where):
+        found = conn.execute(
+            "SELECT g.doc_id, i.source_row FROM staging_match_groups g JOIN staging_match_rows r ON r.group_id = g.group_id "
+            "JOIN items i ON i.item_id = r.item_id WHERE g.project_id = ? AND g.doc_type != 'vor' AND " + where +
+            " ORDER BY g.doc_id, i.source_row", (project_id,)).fetchall()
+        out = {}
+        for r in found:
+            out.setdefault(r["doc_id"], []).append(r["source_row"])
+        return out
+
+    for name, where in ((names[0], "g.status IN ('ambiguous', 'absent') AND g.signal IS NULL"),
+                        (names[1], "g.status = 'ambiguous'")):
+        for doc_id, nums in rows_by_doc(where).items():
+            conn.execute("INSERT INTO dq_checks (doc_id, check_name, passed, details) VALUES (?,?,?,?)",
+                         (doc_id, name, 0, f"строк: {len(nums)}; строки " + ", ".join(map(str, nums[:30]))))
+
+
+def summary_counts(conn, project_id: str) -> dict:
+    """Числа для сводки «Проверено N, не распознано M, не сопоставлено K, из них требует проверки A»."""
+    def one(sql):
+        return conn.execute(sql, (project_id,)).fetchone()[0]
+    in_state = ("SELECT COUNT(*) FROM staging_match_rows r JOIN staging_match_groups g ON g.group_id = r.group_id "
+                "WHERE g.project_id = ? AND g.doc_type != 'vor' AND g.status ")
+    return {
+        "n": one("SELECT COUNT(*) FROM items WHERE project_id = ? AND doc_type != 'contract'"),
+        "m": one("SELECT COALESCE(SUM(s.n_unrecognized), 0) FROM staging_documents_ext s JOIN documents d USING(doc_id) "
+                 "WHERE d.project_id = ?"),
+        "k": one(in_state + "IN ('ambiguous', 'absent')"),
+        "a": one(in_state + "= 'ambiguous'"),
+        "l": 0,           # «не сопоставимо» (валюты не совпали) появится вместе с проверками цены
+    }
+
+
+def summary_line(conn, project_id: str, cfg: dict) -> str:
+    return cfg["rules"]["matching"]["summary_with_review_template"].format(**summary_counts(conn, project_id))
 
 
 def set_final_key(conn, group_id: int, key: str) -> None:
@@ -122,7 +152,7 @@ def save_matching(conn, result: MatchResult, project_id: str, cfg: dict, mode: s
     paired = {p.doc.gid: p for p in result.pairs}
     db_id = {}
     for g in result.groups:
-        status = "vor" if g.is_vor else ("matched" if g.gid in paired else "unmatched")
+        status = "vor" if g.is_vor else result.state_of(g)
         kind = g.kind if g.is_vor else (paired[g.gid].vor.kind if g.gid in paired else (g.kind or default_kind))
         db_id[g.gid] = conn.execute(
             "INSERT INTO staging_match_groups (project_id, doc_id, doc_type, name, unit_norm, signal, kind, qty_sum,"
@@ -130,7 +160,8 @@ def save_matching(conn, result: MatchResult, project_id: str, cfg: dict, mode: s
             (project_id, g.doc_id, g.doc_type, g.name, g.unit_norm, g.kind if not g.is_vor else None, kind, g.qty_sum,
              len(g.rows), g.first.item_id, status)).lastrowid
         for row in g.rows:
-            conn.execute("INSERT INTO staging_match_rows VALUES (?,?,?)", (row.item_id, db_id[g.gid], g.counted[row.item_id]))
+            conn.execute("INSERT INTO staging_match_rows (item_id, group_id, counted, state) VALUES (?,?,?,?)",
+                         (row.item_id, db_id[g.gid], g.counted[row.item_id], None if g.is_vor else status))
     for g in result.groups:
         if g.is_vor:
             set_final_key(conn, db_id[g.gid], work_key(cfg, g.kind, g.name, g.unit_norm))
@@ -139,8 +170,8 @@ def save_matching(conn, result: MatchResult, project_id: str, cfg: dict, mode: s
         for row in p.doc.rows:
             mid = conn.execute("INSERT INTO matches (work_key, item_id, matched_to_item_id, score, method) VALUES (?,?,?,?,?)",
                                (key, row.item_id, p.vor.first.item_id, p.score, p.method)).lastrowid
-            conn.execute("INSERT INTO staging_matches_ext VALUES (?,?,?,?,?,?)",
-                         (mid, db_id[p.doc.gid], p.stage, p.vor.kind, p.reason, p.confidence))
+            conn.execute("INSERT INTO staging_matches_ext (match_id, group_id, state, stage, kind, reason, confidence) "
+                         "VALUES (?,?,'matched',?,?,?,?)", (mid, db_id[p.doc.gid], p.stage, p.vor.kind, p.reason, p.confidence))
         conn.execute("UPDATE staging_match_groups SET matched_group_id = ? WHERE group_id = ?",
                      (db_id[p.vor.gid], db_id[p.doc.gid]))
         set_final_key(conn, db_id[p.doc.gid], key)
