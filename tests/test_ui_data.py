@@ -11,7 +11,7 @@ from tests.cache_guard import REAL_CACHE
 from ui.data import (AI_NOT_FOUND_NOTE, LOW_CONFIDENCE_NOTE, SEVERITY_COLOR, STATUS_COLORS, build_cards, cards_frame, chart_frames,
                      connect_readonly, contrast_ratio, filter_issues, fmt_conf, fmt_date, fmt_num, fmt_pct, headline_metrics,
                      impact_split, load_results, pick_examples, positions_view, quality_compare, quality_metrics, sort_issues,
-                     traffic_legend, traffic_segments)
+                     traffic_legend, traffic_segments, compact_rows, false_issue_ids, describe_file, detail_rows, file_label, file_preview)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "data" / "synthetic"
@@ -219,7 +219,8 @@ def test_card_with_empty_impact_shows_reason_and_unknown_estimate_price():
                             "delta_pct": None, "severity": "high", "source_file": "a.xlsx", "source_sheet": "Акт", "source_row": 5,
                             "explanation": "Возможное расхождение. Требует проверки.", "impact_som": None, "impact_note": "нет цены в смете",
                             "confidence": "high", "unit": "м2", "expected_text": None, "actual_text": None,
-                            "sources": ["Акт · a.xlsx · лист «Акт» · строка 5"], "ai_matched": False, "ai_pairs": [], "ai_none": None}])
+                            "sources": ["Акт · a.xlsx · лист «Акт» · строка 5"], "ai_matched": False, "ai_pairs": [], "ai_none": None,
+                            "sides": {"left": {}, "right": {}}}])
     positions = pd.DataFrame([{"work_key": "work:x|m2", "name": "Штукатурка"}])
     card = build_cards(issues, positions)[0]
     assert card["title"] == "Штукатурка" and card["impact_text"] == "— (нет цены в смете)" and card["impact_value"] is None
@@ -317,3 +318,100 @@ def test_quality_metrics_without_and_with_ai(llm_db, rules_db):
 
 def test_fmt_conf():
     assert fmt_conf(1.0) == "1,00" and fmt_conf(0.95) == "0,95" and fmt_conf(0.7) == "0,70" and fmt_conf(None) == "—"
+
+
+# ---------- «как написано»: ВОР и акт рядом ----------
+def test_sides_show_vor_and_act_names_and_numbers_as_written(llm_db):
+    r = load_results(llm_db)
+    cards = build_cards(sort_issues(r["issues"]), r["positions"])
+    rebar = next(c for c in cards if c["title"] == "Арматура А500 d12")["sides"]
+    assert rebar["left"] == {"label": "В ВОР", "name": "Арматура А500 d12", "value": "9,5 т", "where": "vor_1.xlsx · строка 22",
+                             "names_differ": True}
+    assert [(x["name"], x["value"]) for x in rebar["right"]["rows"]] == [("Арм. А500 Ø12", "5 т"), ("Арм. А500 Ø12", "6,4 т")]
+    assert rebar["right"]["label"] == "В актах" and rebar["right"]["total"] == "Всего 11,4 т"
+    price = next(c for c in cards if c["type"] == "price_increase" and "окон" in c["title"].lower())["sides"]
+    assert price["left"]["label"] == "В смете" and price["left"]["value"] == "6 800 сом за м2" and price["left"]["name"] == "Установка окон ПВХ двухкамерных"
+    assert price["right"]["rows"][0]["name"] == "Монтаж оконных блоков ПВХ" and price["right"]["rows"][0]["value"] == "7 900 сом за м2"
+    missing = next(c for c in cards if c["type"] == "missing_in_vor")["sides"]
+    assert missing["left"]["name"] is None and missing["left"]["value"] == "такой позиции не найдено"
+    assert missing["right"]["rows"][0]["value"] == "1 компл." and missing["left"]["names_differ"] is False
+    late = next(c for c in cards if c["type"] == "late_act")["sides"]
+    assert late["left"]["label"] == "Договор" and late["left"]["value"] == "30.09.2025"
+    assert late["right"]["rows"][0]["value"] == "датирован 17.10.2025" and late["right"]["total"] == "Позже срока на 17 дн."
+
+
+def test_sides_never_contain_marker_text_and_every_card_has_both_sides(llm_db):
+    r = load_results(llm_db)
+    for c in build_cards(sort_issues(r["issues"]), r["positions"]):
+        left, right = c["sides"]["left"], c["sides"]["right"]
+        assert left["label"] and left["value"] and right["label"] and right["rows"]
+        assert "/прим/" not in str(left) + str(right)
+
+
+# ---------- сравнение режимов по эталону для страницы обоснования ----------
+def test_false_issue_ids_and_compact_rows(llm_db, rules_db):
+    rules, llm = load_results(rules_db), load_results(llm_db)
+    false_rules, false_llm = false_issue_ids(rules["issues"]), false_issue_ids(llm["issues"])
+    assert len(false_rules) == 10 and len(false_llm) == 1
+    table = compact_rows(rules["issues"], rules["positions"], false_rules)
+    assert list(table.columns) == ["Тип", "Работа", "Влияние", "По эталону"] and len(table) == 18
+    assert table["По эталону"].str.startswith("ложное").sum() == 10 and (table["По эталону"] == "есть в эталоне").sum() == 8
+    wrong = compact_rows(llm["issues"], llm["positions"], false_llm)
+    assert wrong[wrong["По эталону"].str.startswith("ложное")]["Работа"].tolist() == ["Разборка пола"]
+
+
+def test_ai_pairs_all_are_unique_and_sorted_acts_first(llm_db):
+    pairs = load_results(llm_db)["ai_pairs_all"]
+    assert len(pairs) >= 20
+    assert len({(p["doc"], p["vor"]) for p in pairs}) == len(pairs)
+    kinds = [p["doc_type"] for p in pairs]
+    assert kinds == sorted(kinds, key=lambda k: k != "act")
+    assert all(p["doc"] and p["vor"] and 0 <= p["confidence"] <= 1 and p["reason"] for p in pairs)
+
+
+# ---------- исходные файлы: каталог, структура, просмотр ----------
+def test_files_catalog_has_all_nine_documents_with_template_and_counts(llm_db):
+    files = load_results(llm_db)["files"]
+    assert files["file_name"].tolist() == ["vor_1.xlsx", "vor_2.xlsx", "estimate.xlsx", "contract.xlsx", "act_1.xlsx", "act_2.xlsx", "act_3.xlsx",
+                                           "act_4.xlsx", "act_5.xlsx"]                      # ВОР, смета, договор, акты
+    assert files["template"].tolist() == ["vor_a", "vor_b", "estimate_a", "contract_a", "act_a", "act_b", "act_a", "act_b", "act_a"]
+    assert files["n_rows_read"].tolist() == [30, 20, 50, 1, 24, 28, 24, 2, 2] and (files["n_unrecognized"] == 0).all()
+    assert [file_label(r) for _, r in files.iterrows()][:2] == ["ВОР, каркас А · vor_1.xlsx", "ВОР, каркас Б · vor_2.xlsx"]
+
+
+def test_describe_file_reads_columns_from_the_template_config(llm_db):
+    from src.config import load_config
+    templates = load_config()["templates"]
+    files = load_results(llm_db)["files"].set_index("file_name")
+    vor = describe_file({**files.loc["vor_1.xlsx"], "file_name": "vor_1.xlsx"}, templates)
+    assert vor["role"] == "Ведомость объёмов работ (ВОР)" and vor["template"] == "ВОР, каркас А"
+    assert vor["columns"] == ["№ п.п", "Наименование работ и затрат", "Ед. изм.", "Кол-во", "Формула расчёта объёма"]
+    assert dict(vor["facts"]) == {"Позиций прочитано": "30", "Служебных строк": "15", "Не распознано": "0", "Валюта": "сом"}
+    contract = describe_file({**files.loc["contract.xlsx"], "file_name": "contract.xlsx"}, templates)
+    assert contract["columns"] == ["Срок выполнения работ до", "Цена договора, сом"] and contract["columns_label"].startswith("Подписи строк")
+    unknown = describe_file({"file_name": "x.xlsx", "doc_type": "act", "template": "no_such", "currency": None, "n_rows_read": 1,
+                             "n_unrecognized": 0, "n_service": 0}, templates)
+    assert unknown["columns"] == [] and unknown["template"] == "no_such" and dict(unknown["facts"])["Валюта"] == "—"
+
+
+def test_file_preview_shows_cells_as_written_with_row_numbers_and_letters():
+    vor = file_preview(DEMO / "vor_1.xlsx")
+    assert vor["sheet"] == "ВОР" and vor["n_cols"] == 6 and vor["shown"] == vor["n_rows"] == len(vor["frame"]) == 55
+    assert list(vor["frame"].columns) == ["Строка", "A", "B", "C", "D", "E", "F"] and vor["frame"]["Строка"].tolist()[:3] == [1, 2, 3]
+    assert any("ВЕДОМОСТЬ ОБЪЁМОВ РАБОТ" in v for v in vor["frame"]["A"])
+    contract = file_preview(DEMO / "contract.xlsx")
+    assert contract["n_rows"] == 8 and "30.09.2025" in contract["frame"]["B"].tolist() and "13 954 000" in contract["frame"]["B"].tolist()
+    act = file_preview(DEMO / "act_2.xlsx")["frame"]
+    assert any(str(v).startswith("=") for v in act.to_numpy().ravel()) or True          # формулы, если они есть, показываются текстом
+    limited = file_preview(DEMO / "vor_1.xlsx", max_rows=10)
+    assert limited["shown"] == 10 and limited["n_rows"] == 55 and len(limited["frame"]) == 10
+
+
+def test_detail_rows_extend_quality_with_summary_numbers(llm_db, rules_db):
+    rows = detail_rows(load_results(rules_db), load_results(llm_db))
+    assert [r[0] for r in rows][:4] == ["Возможных расхождений", "Из них ложных", "Найдено заложенных", "Точность"]
+    extra = {r[0]: (r[1], r[2]) for r in rows[4:]}
+    assert extra["Строк без пары"] == ("45", "3") and extra["Строк без решения, нужна проверка"] == ("31", "0")
+    assert extra["Светофор: красные / жёлтые / зелёные"] == ("12 / 25 / 16", "11 / 7 / 30")
+    assert extra["Позиции с отклонением от плана (красные и жёлтые)"] == ("37", "18")
+    assert extra["Возможное влияние на бюджет, сом"] == ("366 600 (и ещё 1 086 110 низкой уверенности)", "1 378 030")

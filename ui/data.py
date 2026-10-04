@@ -8,7 +8,7 @@ import json
 import re
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +27,10 @@ STATUS_COLORS = {"red": ("#C62828", "#FFFFFF"), "yellow": ("#F9A825", "#1B1B1B")
 STATUS_ROW_FILL = {"red": "#FDECEA", "yellow": "#FFF6DB", "green": "#E8F5E9"}       # светлые заливки строк таблицы, текст тёмный
 STATUS_PLURAL = {"red": "Красные", "yellow": "Жёлтые", "green": "Зелёные"}
 STATUS_SINGULAR = {"red": "Красный", "yellow": "Жёлтый", "green": "Зелёный"}
+DOC_TYPE_RU = {"vor": "Ведомость объёмов работ (ВОР)", "estimate": "Смета", "contract": "Договор", "act": "Акт выполненных работ"}
+TEMPLATE_RU = {"vor_a": "ВОР, каркас А", "vor_b": "ВОР, каркас Б", "estimate_a": "Смета", "contract_a": "Договор",
+               "act_a": "Акт, форма А", "act_b": "Акт, форма Б", "act_c": "Акт, форма В"}
+PREVIEW_ROWS = 80
 SOURCE_ROLE = {"vor": "ВОР", "estimate": "Смета", "act": "Акт", "contract": "Договор"}
 LOW_CONFIDENCE_NOTE = "Низкая уверенность, требует проверки"
 AI_NOT_FOUND_NOTE = "ИИ не нашёл пару в ВОР, требует проверки"
@@ -61,8 +65,8 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             summary["banner"] = row[1]
         issues = pd.read_sql_query("SELECT * FROM issues_view WHERE project_id = ?", conn, params=(project_id,))
         positions = pd.read_sql_query("SELECT * FROM position_status WHERE project_id = ?", conn, params=(project_id,))
-        items = pd.read_sql_query("SELECT doc_type, work_key, source_file, source_sheet, source_row FROM items WHERE project_id = ?",
-                                  conn, params=(project_id,))
+        items = pd.read_sql_query("SELECT doc_type, work_key, work_name_raw, quantity, unit_price, source_file, source_sheet, source_row "
+                                  "FROM items WHERE project_id = ?", conn, params=(project_id,))
         ai_keys = {r[0] for r in conn.execute(
             "SELECT DISTINCT m.work_key FROM matches m JOIN staging_matches_ext e ON e.match_id = m.match_id "
             "JOIN items i ON i.item_id = m.item_id WHERE i.project_id = ? AND e.stage IN ('llm', 'llm_row')", (project_id,))}
@@ -77,6 +81,12 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "JOIN staging_match_rows r ON r.group_id = d.group_id JOIN items i ON i.item_id = r.item_id "
             "WHERE d.project_id = ? AND d.outcome = 'none' AND d.confidence >= ?", conn, params=(project_id, min_conf))
         examples = collect_ai_examples(conn, project_id, cfg)
+        files = pd.read_sql_query(
+            "SELECT d.file_name, d.doc_type, d.status, e.template, e.currency, e.n_rows_read, e.n_unrecognized, e.n_service "
+            "FROM documents d JOIN staging_documents_ext e ON e.doc_id = d.doc_id WHERE d.project_id = ? ORDER BY d.doc_id",
+            conn, params=(project_id,))
+        order = {"vor": 0, "estimate": 1, "contract": 2, "act": 3}                  # в списке сначала ВОР, потом смета, договор, акты
+        files = files.assign(_o=files["doc_type"].map(order)).sort_values(["_o", "file_name"]).drop(columns="_o").reset_index(drop=True)
         marks = ",".join("?" for _ in diagnostic)
         documents = pd.read_sql_query(
             "SELECT d.doc_id, d.doc_type, d.file_name, d.status, "
@@ -85,8 +95,10 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "GROUP BY d.doc_id ORDER BY d.doc_id", conn, params=(*diagnostic, project_id))
     finally:
         conn.close()
-    issues = attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, cfg["synonyms"].get("strip_markers", []))
-    return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples)}
+    markers = cfg["synonyms"].get("strip_markers", [])
+    issues = attach_sides(attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, markers), items, markers)
+    return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples),
+            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers), "files": files}
 
 
 # ---------- форматирование ----------
@@ -161,6 +173,109 @@ def attach_context(issues: pd.DataFrame, items: pd.DataFrame, ai_keys: set) -> p
         ai.append(r["issue_type"] in ("volume_exceeded", "price_increase") and r["work_key"] in ai_keys)
     issues["sources"] = sources
     issues["ai_matched"] = ai
+    return issues
+
+
+# ---------- исходные файлы: каталог, структура, просмотр ----------
+def file_label(row) -> str:
+    """Подпись файла в списке выбора: «ВОР, каркас А · vor_1.xlsx»."""
+    return f"{TEMPLATE_RU.get(row['template'], row['template'])} · {row['file_name']}"
+
+
+def describe_file(row, templates: dict) -> dict:
+    """Структура файла для панели: что это за документ, какой шаблон найден, какие колонки программа распознаёт, что прочитано.
+
+    templates: config/templates.yaml (раздел templates). Колонки берутся из шаблона: первое название каждой колонки без служебных."""
+    tpl = templates.get(row["template"], {})
+    columns = [names[0] for field, names in tpl.get("columns", {}).items() if field != "seq" and names]
+    if tpl.get("columns", {}).get("seq"):
+        columns.insert(0, tpl["columns"]["seq"][0])
+    label = "Колонки, которые распознаёт программа"
+    if not columns and tpl.get("fields"):                       # договор: пары «подпись - значение», а не таблица
+        columns = [names[0] for names in tpl["fields"].values() if names]
+        label = "Подписи строк, которые распознаёт программа"
+    return {"file": row["file_name"], "role": DOC_TYPE_RU.get(row["doc_type"], row["doc_type"]),
+            "template": TEMPLATE_RU.get(row["template"], row["template"]), "columns": columns, "columns_label": label,
+            "facts": [("Позиций прочитано", fmt_num(row["n_rows_read"])), ("Служебных строк", fmt_num(row["n_service"])),
+                      ("Не распознано", fmt_num(row["n_unrecognized"])), ("Валюта", row["currency"] or EMPTY)]}
+
+
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%d.%m.%Y")
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return fmt_num(value)
+    return str(value).strip()
+
+
+def file_preview(path, max_rows: int = PREVIEW_ROWS) -> dict:
+    """Первый лист Excel как в файле: номера строк, буквы колонок, значения и формулы (формулы показываются текстом «=…»).
+
+    -> {sheet, n_rows (до последней непустой строки), n_cols, shown, frame}. Файл только читается."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+    wb = load_workbook(path, data_only=False, read_only=True)
+    ws = wb.worksheets[0]
+    rows = [[_cell_text(v) for v in row] for row in ws.iter_rows(values_only=True)]
+    title = ws.title
+    wb.close()
+    while rows and not any(rows[-1]):
+        rows.pop()
+    width = max((max((i for i, v in enumerate(r) if v), default=-1) + 1 for r in rows), default=0)
+    rows = [(r + [""] * width)[:width] for r in rows]
+    shown = rows[:max_rows]
+    frame = pd.DataFrame(shown, columns=[get_column_letter(i + 1) for i in range(width)])
+    frame.insert(0, "Строка", range(1, len(shown) + 1))
+    return {"sheet": title, "n_rows": len(rows), "n_cols": width, "shown": len(shown), "frame": frame}
+
+
+# ---------- «как написано»: что в ВОР и что в акте ----------
+def attach_sides(issues: pd.DataFrame, items: pd.DataFrame, markers) -> pd.DataFrame:
+    """Колонка sides: {left, right} для карточки «в ВОР и в акте, как написано».
+
+    left: документ, с которым сравнивали (ВОР, смета или договор): название как в файле, значение. right: строки акта: название как в файле,
+    значение, где лежит. Названия и числа берутся из items (название строки как записано, количество и цена после приведения единиц)."""
+    sides = []
+    for _, r in issues.iterrows():
+        unit = r["unit"] or ""
+        key = r["work_key"]
+        same = items[items["work_key"] == key] if key else items.iloc[0:0]
+        own = items[(items["source_file"] == r["source_file"]) & (items["source_sheet"] == r["source_sheet"])
+                    & (items["source_row"] == r["source_row"]) & (items["doc_type"] == "act")]
+
+        def row_of(part, value):
+            return [{"name": _clean(x.work_name_raw, markers), "value": value(x), "where": f"{x.source_file} · строка {int(x.source_row)}"}
+                    for x in part.itertuples()]
+
+        kind = r["issue_type"]
+        if kind == "volume_exceeded":
+            vor = row_of(same[same["doc_type"] == "vor"].sort_values(["source_file", "source_row"]).head(1), lambda x: f"{fmt_num(r['expected'])} {unit}")
+            acts = row_of(same[same["doc_type"] == "act"].sort_values(["source_file", "source_row"]), lambda x: f"{fmt_num(x.quantity)} {unit}")
+            left = {"label": "В ВОР", "name": vor[0]["name"] if vor else None, "value": f"{fmt_num(r['expected'])} {unit}",
+                    "where": vor[0]["where"] if vor else ""}
+            right = {"label": "В актах", "rows": acts, "total": f"Всего {fmt_num(r['actual'])} {unit}"}
+        elif kind == "price_increase":
+            est = row_of(same[same["doc_type"] == "estimate"].head(1), lambda x: "")
+            price = "цены в смете нет" if pd.isna(r["expected"]) else f"{fmt_num(r['expected'])} сом за {unit}"
+            left = {"label": "В смете", "name": est[0]["name"] if est else None, "value": price, "where": est[0]["where"] if est else ""}
+            right = {"label": "В акте", "rows": row_of(own, lambda x: f"{fmt_num(r['actual'])} сом за {unit}"), "total": ""}
+        elif kind == "missing_in_vor":
+            left = {"label": "В ВОР", "name": None, "value": "такой позиции не найдено", "where": ""}
+            right = {"label": "В акте", "rows": row_of(own, lambda x: f"{fmt_num(x.quantity)} {unit}"), "total": ""}
+        else:
+            left = {"label": "Договор", "name": "Срок выполнения работ", "value": fmt_date(r["expected_text"]), "where": ""}
+            right = {"label": "Акт", "rows": [{"name": f"Акт {r['source_file']}", "value": f"датирован {fmt_date(r['actual_text'])}",
+                                               "where": f"{r['source_file']} · строка {int(r['source_row'])}"}],
+                     "total": f"Позже срока на {fmt_num(r['actual'])} дн."}
+        names = [x["name"].lower() for x in right["rows"]]
+        left["names_differ"] = bool(left["name"] and kind in ("volume_exceeded", "price_increase") and any(n != left["name"].lower() for n in names))
+        sides.append({"left": left, "right": right})
+    issues = issues.copy()
+    issues["sides"] = sides
     return issues
 
 
@@ -266,6 +381,39 @@ def pick_examples(examples: list, n: int = 6) -> list:
     return chosen[:n]
 
 
+def ai_pair_list(pair_rows: pd.DataFrame, markers) -> list:
+    """Все пары названий, которые сопоставил ИИ (без повторов): [{doc_type, doc, vor, confidence, reason, stage}], сначала акты."""
+    seen, out = set(), []
+    for r in pair_rows.itertuples():
+        pair = {"doc_type": r.doc_type, "doc": _clean(r.doc_name, markers), "vor": _clean(r.vor_name, markers),
+                "confidence": None if pd.isna(r.confidence) else float(r.confidence), "reason": r.reason or "", "stage": r.stage}
+        if (pair["doc"], pair["vor"]) not in seen:
+            seen.add((pair["doc"], pair["vor"]))
+            out.append(pair)
+    return sorted(out, key=lambda p: (p["doc_type"] != "act", p["doc"].lower()))
+
+
+def false_issue_ids(issues: pd.DataFrame) -> set:
+    """issue_id расхождений, которых нет в эталоне синтетики (ложные): scripts/evaluate.py по data/ground_truth.csv."""
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import evaluate as ev
+    result = ev.evaluate_issues(issues.to_dict("records"), ev.read_csv(ROOT / "data" / "ground_truth.csv"), ev.read_csv(ROOT / "data" / "traps.csv"))
+    return {int(i["issue_id"]) for i in result["false_issues"]}
+
+
+def compact_rows(issues: pd.DataFrame, positions: pd.DataFrame, false_ids: set) -> pd.DataFrame:
+    """Короткая таблица расхождений одного режима для страницы обоснования: тип, работа, влияние, совпало ли с эталоном."""
+    titles = _titles(issues, positions)
+    rows = []
+    for idx, r in issues.iterrows():
+        impact = EMPTY if pd.isna(r["impact_som"]) else f"{fmt_num(r['impact_som'])} сом"
+        rows.append({"Тип": TYPE_RU[r["issue_type"]], "Работа": titles[idx], "Влияние": impact,
+                     "По эталону": "ложное: в эталоне нет" if int(r["issue_id"]) in false_ids else "есть в эталоне"})
+    return pd.DataFrame(rows, columns=["Тип", "Работа", "Влияние", "По эталону"])
+
+
 def quality_metrics(issues: pd.DataFrame) -> dict:
     """Число расхождений, ложные расхождения, найдено из эталона и точность: считает scripts/evaluate.py по data/ground_truth.csv
     (эталон синтетического генератора). Точность: доля показанных расхождений, которые есть в эталоне."""
@@ -290,6 +438,21 @@ def quality_compare(rules_issues: pd.DataFrame, llm_issues: pd.DataFrame) -> lis
             ("Точность", pct(a), pct(b))]
 
 
+def detail_rows(without_ai: dict, with_ai: dict) -> list:
+    """Подробное сравнение режимов: качество по эталону и числа из summary (строки без пары, светофор, позиции с отклонением от плана, влияние)."""
+    rows = quality_compare(without_ai["issues"], with_ai["issues"])
+    sa, sb = without_ai["summary"], with_ai["summary"]
+    ma = headline_metrics(sa, without_ai["issues"], without_ai["positions"])
+    mb = headline_metrics(sb, with_ai["issues"], with_ai["positions"])
+    light = lambda s: " / ".join(str(s["statuses"][k]) for k in ("red", "yellow", "green"))  # noqa: E731
+    impact_a = fmt_num(ma["impact"]) + (f" (и ещё {fmt_num(ma['impact_extra'])} низкой уверенности)" if ma["impact_extra_n"] else "")
+    return rows + [("Строк без пары", fmt_num(sa["k"]), fmt_num(sb["k"])),
+                   ("Строк без решения, нужна проверка", fmt_num(sa["a"]), fmt_num(sb["a"])),
+                   ("Светофор: красные / жёлтые / зелёные", light(sa), light(sb)),
+                   ("Позиции с отклонением от плана (красные и жёлтые)", fmt_num(ma["review_positions"]), fmt_num(mb["review_positions"])),
+                   ("Возможное влияние на бюджет, сом", impact_a, fmt_num(mb["impact"]))]
+
+
 # ---------- сводные числа ----------
 def impact_split(issues: pd.DataFrame) -> dict:
     """Сумма влияния на бюджет по высокой и низкой уверенности (пустое влияние считается нулём) и число расхождений низкой уверенности."""
@@ -301,7 +464,7 @@ def impact_split(issues: pd.DataFrame) -> dict:
 
 
 def headline_metrics(summary: dict, issues: pd.DataFrame, positions: pd.DataFrame) -> dict:
-    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, позиции для проверки (красные и жёлтые из position_status).
+    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, позиции с отклонением от плана (красные и жёлтые из position_status).
 
     Влияние: в режиме llm общая сумма из summary; в режиме без ИИ крупно только высокая уверенность, остальное отдельно (мелко)."""
     split = impact_split(issues)
@@ -423,7 +586,7 @@ def build_cards(issues: pd.DataFrame, positions: pd.DataFrame) -> list:
                       "severity": r["severity"], "severity_label": SEVERITY_RU[r["severity"]], "phrase": issue_phrase(r),
                       "impact_text": impact, "impact_value": None if pd.isna(r["impact_som"]) else float(r["impact_som"]),
                       "sources": list(r["sources"]), "ai": bool(r["ai_matched"]), "note": note,
-                      "ai_pairs": list(r["ai_pairs"]), "ai_none": r["ai_none"]})
+                      "ai_pairs": list(r["ai_pairs"]), "ai_none": r["ai_none"], "sides": r["sides"]})
     return cards
 
 
