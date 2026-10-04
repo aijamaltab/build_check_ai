@@ -190,7 +190,7 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 
 ## 15. Текущее состояние и следующие шаги (обновлять в конце каждой сессии)
 
-**Состояние на 04.10.2026.** Готовы подготовительная часть (спецификация, конфиги, генератор, ground truth) и **ingestion с нормализацией**: 9 синтетических xlsx загружаются в `items` в SQLite, сверка с генератором и `ground_truth.csv` сходится. **Matching без ИИ** тоже готов (`src/matching`, `scripts/match.py`, `scripts/verify_matching.py`) с тремя состояниями строки (matched, ambiguous, absent); реальных LLM-судей нет (интерфейсы `PairJudge` и `RowMatcher`, заглушки `NoopJudge` и `NoopRowMatcher`). Проверок расхождений, views, `evaluate.py` и интерфейса ещё нет. Тестов 170.
+**Состояние на 04.10.2026.** Готовы подготовительная часть (спецификация, конфиги, генератор, ground truth) и **ingestion с нормализацией**: 9 синтетических xlsx загружаются в `items` в SQLite, сверка с генератором и `ground_truth.csv` сходится. **Matching без ИИ** тоже готов (`src/matching`, `scripts/match.py`, `scripts/verify_matching.py`) с тремя состояниями строки (matched, ambiguous, absent); реальных LLM-судей нет (интерфейсы `PairJudge` и `RowMatcher`, заглушки `NoopJudge` и `NoopRowMatcher`). Проверок расхождений, views, `evaluate.py` и интерфейса ещё нет. Тестов 172.
 
 **Готово (в `main`, тесты проходят):**
 - `docs/synthetic_spec.md`: проект, шаблоны, единицы, список 12 расхождений и 6 ловушек, правила ключа и `kind`, порядок сопоставления, метрики `evaluate.py`, светофор и влияние на бюджет.
