@@ -34,7 +34,8 @@ def fmt(x, digits=2) -> str:
     if x is None:
         return "—"
     text = f"{float(x):,.{digits}f}".replace(",", " ")
-    return text.rstrip("0").rstrip(".") if "." in text else text
+    text = text.rstrip("0").rstrip(".") if "." in text else text
+    return text.replace(".", ",")                         # по-русски десятичная запятая
 
 
 @dataclass

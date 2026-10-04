@@ -76,6 +76,8 @@ def run_pipeline(source_dir, db_path, mode: str = "rules_only", judge=None, row_
             "documents_with_errors": [r.file for r in ingest_reports if r.status == "error"],
             "files": len(ingest_reports),
         }
+        summary["caveat"] = (rules["issues"]["rules_only_status_caveat"].format(a=summary["a"])
+                             if effective == "rules_only" and summary["a"] else None)
         summary["text"] = rules["issues"]["summary_run_template"].format(
             n=summary["n"], m=summary["m"], k=summary["k"], a=summary["a"], l=summary["l"], z=summary["z"],
             impact=fmt(summary["impact_som"]), mode=effective)
