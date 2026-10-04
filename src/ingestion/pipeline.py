@@ -78,6 +78,8 @@ def reset_project(conn, project_id: str) -> None:
         if table in existing:
             conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
     conn.execute(f"DELETE FROM matches WHERE item_id IN ({items})", (project_id,))
+    if "staging_issues_ext" in existing:
+        conn.execute("DELETE FROM staging_issues_ext WHERE issue_id IN (SELECT issue_id FROM issues WHERE project_id = ?)", (project_id,))
     conn.execute("DELETE FROM issues WHERE project_id = ?", (project_id,))
     conn.execute(f"DELETE FROM staging_items_ext WHERE item_id IN ({items})", (project_id,))
     conn.execute("DELETE FROM items WHERE project_id = ?", (project_id,))

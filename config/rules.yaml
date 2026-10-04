@@ -16,6 +16,29 @@ price_increase:
 
 late_act:
   grace_days: 0           # допустимая задержка после срока договора
+  severity: medium
+
+# Расхождения (docs/synthetic_spec.md §6, §7). Все тексты и пороги здесь, числа в тексты подставляет код (LLM чисел не считает).
+issues:
+  # Severity объёма и цены: delta_pct не ниже high_pct блока проверки -> high, иначе medium.
+  severity_default: medium
+  missing_in_vor:
+    severity_confirmed: high       # ИИ (RowMatcher) уверенно ответил «в ВОР такой работы нет»
+    severity_unconfirmed: low      # режим rules_only или ИИ не спрашивали: низкая уверенность
+    low_confidence_note: "Без ИИ, низкая уверенность, требует проверки."
+    confirmed_note: "ИИ не нашёл пару среди всех позиций ВОР."
+  unit_labels: {m3: "м3", m2: "м2", m: "м", t: "т", kg: "кг", pcs: "шт.", set: "компл.", l: "л", point: "точка", day: "сутки", lump_sum: "усл."}
+  no_estimate_price_note: "нет цены в смете"     # impact_som пустой, строка помечается
+  currency_mismatch_note: "валюты не совпадают, проверка цены не выполнена"
+  # Шаблоны explanation. Формулировки только «возможное расхождение» и «требует проверки».
+  explanations:
+    volume_exceeded: "Возможное расхождение: накопительный объём по актам {actual} {unit} при плане по ВОР {expected} {unit} (больше на {delta_pct} %, допуск {tolerance} %). Требует проверки."
+    price_increase: "Возможное расхождение: цена в акте {actual} за {unit} при цене в смете {expected} (выше на {delta_pct} %, допуск {tolerance} %). Требует проверки."
+    missing_in_vor: "Возможное расхождение: позиция «{name}» есть в акте ({actual} {unit}), но в ВОР пары не найдено. Требует проверки."
+    late_act: "Возможное расхождение: акт датирован {actual_date}, срок договора {expected_date}, позже срока на {days} дн. Требует проверки."
+    other_rows: "Другие строки позиции в документе: {rows}."
+  # Сводка прогона (run_pipeline): строка для интерфейса и питча.
+  summary_run_template: "Проверено {n} позиций, не распознано {m}, не сопоставлено {k}, из них требует проверки {a}, не сопоставимо {l}; расхождений {z}; возможное влияние на бюджет {impact} сом; режим {mode}"
 
 matching:
   fuzzy_threshold: 90     # по умолчанию; score >= порога — «та же работа» без LLM. evaluate.py прогоняет 85 и 90 (evaluate.thresholds), выбор по цифрам
