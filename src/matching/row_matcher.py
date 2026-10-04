@@ -83,16 +83,22 @@ def resolve_rows(conn, matcher: RowMatcher, cfg: dict, project_id: str) -> RowRe
     vor_by_key = {r["final_work_key"]: r for r in conn.execute(
         "SELECT * FROM staging_match_groups WHERE project_id = ? AND doc_type = 'vor'", (project_id,))}
 
-    answers = []
+    rows = []
     for g in todo:                                    # сначала все вопросы к модели, затем применение по убыванию уверенности
         first = _first_row(conn, g["group_id"])
-        row = {"name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"], "kind": g["signal"],
-               "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"],
-               "quantity": g["qty_sum"], "unit_price": first["unit_price"], "doc_type": g["doc_type"], "state": g["status"]}
-        answer = matcher.match_row(row, vor_keys)
+        rows.append({"name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"], "kind": g["signal"],
+                     "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"],
+                     "quantity": g["qty_sum"], "unit_price": first["unit_price"], "doc_type": g["doc_type"], "state": g["status"]})
+    if hasattr(matcher, "match_rows"):                # матчер на Gemini отвечает пачками и кэширует по строке
+        raw_answers = list(matcher.match_rows(rows, vor_keys))
+    else:
+        raw_answers = [matcher.match_row(row, vor_keys) for row in rows]
+    answers = []
+    for g, answer in zip(todo, raw_answers):
         stats.asked += 1
-        if not _valid(answer):
-            answer = {"key": None, "confidence": 0.0, "reason": "ответ не по схеме", "_invalid": True}
+        if not _valid(answer):                        # None: ИИ не дал решения
+            reason = "ИИ не дал решения" if answer is None else "ответ не по схеме"
+            answer = {"key": None, "confidence": 0.0, "reason": reason, "_invalid": True}
         answers.append((g, answer))
     answers.sort(key=lambda x: -x[1]["confidence"])   # sort стабилен: при равной уверенности порядок документа
 

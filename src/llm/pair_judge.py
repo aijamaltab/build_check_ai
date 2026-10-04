@@ -8,7 +8,7 @@ from src.matching.names import NameNormalizer
 
 from .cache import normalize_text
 from .client import LlmClient
-from .prompts import PAIR_PROMPT, PAIR_PROMPT_VERSION, PAIR_SCHEMA
+from .prompts import GRADE_REFERENCE, PAIR_PROMPT, PAIR_PROMPT_VERSION, PAIR_SCHEMA, UNKNOWN_KIND_RULE
 
 KNOWN_KINDS = ("work", "material")
 
@@ -58,7 +58,8 @@ class GeminiPairJudge:
         (an, au, ak), (bn, bu, bk) = side(a), side(b)
         payload = {"a": [normalize_text(an), au, ak], "b": [normalize_text(bn), bu, bk]}
         shown = lambda kind: kind if kind in KNOWN_KINDS else "неизвестен"  # noqa: E731
-        prompt = PAIR_PROMPT.format(a_name=an, a_unit=au, a_kind=shown(ak), b_name=bn, b_unit=bu, b_kind=shown(bk))
+        prompt = PAIR_PROMPT.format(a_name=an, a_unit=au, a_kind=shown(ak), b_name=bn, b_unit=bu, b_kind=shown(bk),
+                                    unknown_kind_rule=UNKNOWN_KIND_RULE, grade_reference=GRADE_REFERENCE)
         answer = self.client.ask("pair", PAIR_PROMPT_VERSION, payload, prompt, PAIR_SCHEMA, valid_pair_answer)
         if answer is None:
             return None

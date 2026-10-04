@@ -164,15 +164,25 @@ class LlmClient:
             if wait > 0:
                 self._sleep(wait)
 
-    def ask(self, function: str, prompt_version: str, payload: dict, prompt: str, schema: dict, validate):
-        """-> ответ модели (словарь, прошедший validate) или None. payload: нормализованный вход, он идёт в ключ кэша."""
-        key = cache_key(function, self.model, prompt_version, self.cfg["schema_version"], payload)
+    def key_for(self, function: str, prompt_version: str, payload: dict) -> str:
+        return cache_key(function, self.model, prompt_version, self.cfg["schema_version"], payload)
+
+    def cached(self, key: str, validate):
+        """-> ответ из кэша (прошёл validate) или None. Попадание считается в cache_hits."""
         record = self.cache.get(key)
         if record is not None and validate(record["answer"]):
             self.stats.cache_hits += 1
             return record["answer"]
+        return None
+
+    def store(self, key: str, answer, function: str, prompt_version: str, payload: dict) -> None:
+        """В кэш идёт только валидный ответ; сбои и «нет ответа» не пишутся."""
+        self.cache.put(key, answer, function=function, model=self.model, prompt_version=prompt_version, payload=payload)
+
+    def generate(self, prompt: str, schema: dict, validate):
+        """Один запрос к модели с повторами, паузами и счётчиками -> разобранный JSON (прошёл validate) или None.
+        Кэш не трогает (его ведёт вызывающий: по запросу или по строке пакета); no_answer не считает."""
         if not self.can_call_api or self.stop_reason:     # «только кэш», нет ключа или прогон остановлен: API не вызываем
-            self.stats.no_answer += 1
             return None
         retries = int(self.cfg["max_retries"])
         for attempt in range(retries + 1):
@@ -224,8 +234,18 @@ class LlmClient:
                     self._sleep(min(pause, self.cfg["retry_max_pause_seconds"]))
                 continue
             self.consecutive_429 = 0
-            self.cache.put(key, answer, function=function, model=self.model, prompt_version=prompt_version,
-                           payload=payload)                      # в кэш только валидный ответ; сбои и «нет ответа» не пишутся
             return answer
-        self.stats.no_answer += 1
         return None
+
+    def ask(self, function: str, prompt_version: str, payload: dict, prompt: str, schema: dict, validate):
+        """-> ответ модели (словарь, прошедший validate) или None. payload: нормализованный вход, он идёт в ключ кэша."""
+        key = self.key_for(function, prompt_version, payload)
+        hit = self.cached(key, validate)
+        if hit is not None:
+            return hit
+        answer = self.generate(prompt, schema, validate)
+        if answer is None:
+            self.stats.no_answer += 1
+            return None
+        self.store(key, answer, function, prompt_version, payload)
+        return answer

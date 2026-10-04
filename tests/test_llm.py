@@ -231,9 +231,10 @@ def test_pipeline_no_answer_keeps_rows_ambiguous_not_absent(synth, tmp_path):
 def test_build_default_ai_returns_judge_that_reports_availability(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_CACHE_DIR", str(tmp_path / "empty"))
     judge_, matcher = build_default_ai(CFG)
-    assert judge_.available is False and matcher is None
+    assert judge_.available is False and matcher.available is False and judge_.client is matcher.client
     monkeypatch.setenv("GEMINI_API_KEY", SECRET)
-    assert build_default_ai(CFG)[0].available is True
+    assert build_default_ai(CFG)[0].available is True and build_default_ai(CFG)[1].available is True
+    assert build_default_ai(CFG, cache_only=True)[0].available is False
 
 
 # ---------- квоты: 429, retry delay, суточный лимит, остановка прогона ----------
@@ -448,11 +449,11 @@ def test_unknown_rpd_means_no_daily_stop(tmp_path):
 
 
 # ---------- вид строки: signal, а не значение по умолчанию (pair-v2) ----------
-def test_prompt_version_is_v2_and_old_cache_is_not_reused(tmp_path):
+def test_prompt_version_is_v3_and_old_cache_is_not_reused(tmp_path):
     from src.llm.cache import cache_key
     from src.llm.prompts import PAIR_PROMPT_VERSION
-    assert PAIR_PROMPT_VERSION == "pair-v2"
-    assert cache_key("pair", "m", "pair-v1", 1, {"x": 1}) != cache_key("pair", "m", PAIR_PROMPT_VERSION, 1, {"x": 1})
+    assert PAIR_PROMPT_VERSION == "pair-v3"
+    assert cache_key("pair", "m", "pair-v2", 1, {"x": 1}) != cache_key("pair", "m", PAIR_PROMPT_VERSION, 1, {"x": 1})
 
 
 def test_row_without_kind_signal_is_described_without_work(synth, tmp_path):
