@@ -67,6 +67,16 @@ def reset_project(conn, project_id: str) -> None:
     """Повторный запуск не дублирует данные: стираем прошлую загрузку проекта (в порядке внешних ключей)."""
     items = "SELECT item_id FROM items WHERE project_id = ?"
     docs = "SELECT doc_id FROM documents WHERE project_id = ?"
+    existing = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    # таблицы matching (src/matching/store.py) создаются позже и ссылаются на items и matches: чистим их первыми
+    if "staging_matches_ext" in existing:
+        conn.execute(f"DELETE FROM staging_matches_ext WHERE match_id IN "
+                     f"(SELECT match_id FROM matches WHERE item_id IN ({items}))", (project_id,))
+    if "staging_match_rows" in existing:
+        conn.execute(f"DELETE FROM staging_match_rows WHERE item_id IN ({items})", (project_id,))
+    for table in ("staging_match_groups", "staging_match_candidates", "staging_match_run"):
+        if table in existing:
+            conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
     conn.execute(f"DELETE FROM matches WHERE item_id IN ({items})", (project_id,))
     conn.execute("DELETE FROM issues WHERE project_id = ?", (project_id,))
     conn.execute(f"DELETE FROM staging_items_ext WHERE item_id IN ({items})", (project_id,))
