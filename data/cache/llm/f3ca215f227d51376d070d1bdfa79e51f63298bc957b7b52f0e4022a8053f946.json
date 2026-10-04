@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 1.0,
+    "reason": "один и тот же тип кабеля, различия в написании маркировки незначительны",
+    "same_work": true
+  },
+  "created_at": "2026-10-04T16:56:59",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "кабель ввг-нг 3х2,5",
+      "m",
+      "-"
+    ],
+    "b": [
+      "кабель ввгнг 3×2,5",
+      "m",
+      "material"
+    ]
+  },
+  "prompt_version": "pair-v2"
+}

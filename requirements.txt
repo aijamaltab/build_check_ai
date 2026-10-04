@@ -3,4 +3,3 @@ openpyxl
 rapidfuzz
 streamlit
 pyyaml
-pytest

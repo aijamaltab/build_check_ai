@@ -119,3 +119,79 @@ def test_small_project_traffic_light_boundaries(tmp_path):
     create_views(conn, CFG)
     status = {r["work_key"].split(":")[1].split("|")[0][-1]: r["status"] for r in conn.execute("SELECT * FROM position_status")}
     assert status == {"а": "yellow", "б": "green", "в": "green", "г": "green", "д": "red"}
+
+
+# ---------- name и unit_label в position_status ----------
+def strip_markers(text):
+    for marker in load_config()["synonyms"]["strip_markers"]:
+        text = text.replace(marker, "")
+    return text.strip()
+
+
+@pytest.fixture(scope="module")
+def llm_db(synth):
+    return build(synth, llm=True)
+
+
+@pytest.fixture(scope="module")
+def rules_db(synth):
+    return build(synth, llm=False)
+
+
+def test_name_and_unit_label_are_filled_for_every_position(llm_db, rules_db):
+    rows = llm_db.execute("SELECT * FROM position_status").fetchall()
+    assert len(rows) == 47
+    for conn in (llm_db, rules_db):
+        for r in conn.execute("SELECT * FROM position_status").fetchall():
+            assert r["name"] and r["name"].strip() == r["name"], r["work_key"]
+            assert r["unit_label"], r["work_key"]
+            assert r["unit"] is not None                                         # служебная колонка осталась
+
+
+def test_name_of_vor_position_is_first_vor_row_raw_name_without_markers(llm_db):
+    checked = 0
+    for r in llm_db.execute("SELECT * FROM position_status WHERE plan_qty IS NOT NULL").fetchall():
+        first = llm_db.execute("SELECT work_name_raw FROM items WHERE doc_type = 'vor' AND work_key = ? "
+                               "ORDER BY doc_id, source_row LIMIT 1", (r["work_key"],)).fetchone()[0]
+        assert r["name"] == strip_markers(first), r["work_key"]
+        checked += 1
+    assert checked == 45
+    marked = llm_db.execute("SELECT COUNT(*) FROM items WHERE doc_type = 'vor' AND work_name_raw LIKE '%/прим/%'").fetchone()[0]
+    assert marked > 0                                                           # пометка в данных есть, а в названии для показа её нет
+    assert not llm_db.execute("SELECT 1 FROM position_status WHERE name LIKE '%/прим/%'").fetchall()
+    # «Строительный мусор» шесть строк ВОР это одна позиция с названием первой строки
+    assert llm_db.execute("SELECT name FROM position_status WHERE work_key = 'work:строительный мусор|t'").fetchone()[0] == "Строительный мусор"
+
+
+def test_position_only_in_acts_takes_its_name_from_the_first_act_row(llm_db, rules_db):
+    rows = llm_db.execute("SELECT * FROM position_status WHERE plan_qty IS NULL ORDER BY name").fetchall()
+    assert [r["name"] for r in rows] == ["Монтаж системы видеонаблюдения", "Устройство отмостки вокруг здания"]
+    for conn in (llm_db, rules_db):
+        for r in conn.execute("SELECT * FROM position_status WHERE plan_qty IS NULL").fetchall():
+            first = conn.execute("SELECT work_name_raw FROM items WHERE doc_type = 'act' AND work_key = ? "
+                                 "ORDER BY doc_id, source_row LIMIT 1", (r["work_key"],)).fetchone()[0]
+            assert r["name"] == first, r["work_key"]                              # название из акта, не из ВОР
+
+
+def test_unit_label_matches_issues_view_unit_and_old_unit_is_unchanged(llm_db):
+    labels = load_config()["rules"]["issues"]["unit_labels"]
+    for r in llm_db.execute("SELECT * FROM position_status").fetchall():
+        assert r["unit_label"] == labels.get(r["unit"], r["unit"]), r["work_key"]
+    pairs = llm_db.execute(
+        "SELECT p.unit_label, v.unit FROM position_status p JOIN issues_view v ON v.work_key = p.work_key "
+        "WHERE v.issue_type IN ('volume_exceeded', 'price_increase', 'missing_in_vor')").fetchall()
+    assert pairs and all(a == b for a, b in pairs)                               # та же единица, что в issues_view.unit
+    units = {r["unit"] for r in llm_db.execute("SELECT unit FROM position_status")}
+    assert {"m3", "m2", "t"} <= units and not any(any(c in u for c in "мтш") for u in units)     # служебные латинские, как раньше
+
+
+def test_rerun_keeps_one_row_per_position(synth, tmp_path):
+    from src.pipeline import run_pipeline
+    db = tmp_path / "again.db"
+    counts = []
+    for _ in range(2):
+        run_pipeline(synth["dir"], db, "rules_only")
+        conn = sqlite3.connect(db)
+        counts.append(conn.execute("SELECT COUNT(*), COUNT(DISTINCT work_key) FROM position_status").fetchone())
+        conn.close()
+    assert counts[0] == counts[1] and counts[0][0] == counts[0][1] > 0

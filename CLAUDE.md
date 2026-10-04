@@ -66,6 +66,7 @@ Python 3.11+, pandas, openpyxl, rapidfuzz, SQLite (через sqlite3 или SQL
 ├── README.md
 ├── requirements.txt
 ├── app.py                      # Streamlit
+├── ui/                         # интерфейс: data.py (весь SQL, load_results), компоненты экрана, stubs/ (JSON-заглушки)
 ├── config/
 │   ├── units.yaml              # нормализация единиц: м3, куб.м, м³ -> m3
 │   ├── templates.yaml          # маппинг колонок для каждого шаблона документа
@@ -127,7 +128,7 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 ## 9. Синтетические данные
 
 - Сценарий: капремонт школы. Позиции: демонтаж, земляные работы, бетон, арматура, кладка, кровля, окна ПВХ, штукатурка, окраска, электрика, отопление и т.д.
-- Названия и единицы строятся по образцу публичных тендерных ведомостей (ADB, zakupki.gov.kg), цены в сомах — **ориентировочные, не рыночные**. Не называть их реальными данными.
+- Названия и единицы строятся по образцу публичных тендерных ведомостей (ADB и портал государственных закупок КР), цены в сомах — **ориентировочные, не рыночные**. Не называть их реальными данными.
 - Один и тот же вид работ называется по-разному в разных документах («Бетон М300», «бетонная смесь М-300», «Бетон тяж. кл. В22,5»), единицы пишутся по-разному («м3», «куб.м», «м³») и бывают с множителем нормы («100 м2», «1000 м3», «100 шт.», «1 т груза»; количество указано в единицах нормы). Часть названий длинными нормативными формулировками. Добавлять реалистичный «мусор»: пустые строки, объединённые ячейки, лишние колонки, итоговые строки, пометка «/прим/», строка номеров колонок «1 2 3 4 5», формула объёма текстом, повторяющийся «Строительный мусор», материалы отдельными строками.
 - Два шаблона ВОР по каркасам реальных тендеров (А и Б), цен в ВОР нет. Одна смета с ценами за единицу. Два шаблона акта (разные названия колонок и порядок), подпись «по мотивам КС-2».
 - Заложить расхождения (сейчас 12): превышение объёма, рост цены (сравнение со сметой), позиция только в акте, акт после срока, дубль работы в двух актах. Плюс 6 «ловушек» на ложные срабатывания.
@@ -190,24 +191,24 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 
 ## 15. Текущее состояние и следующие шаги (обновлять в конце каждой сессии)
 
-**Состояние на 04.10.2026.** Бэкенд готов целиком: ingestion, нормализация, matching (три состояния строки), четыре проверки, `issues`, views `position_status` и `issues_view`, `src/pipeline.py` (`run_pipeline`), `scripts/evaluate.py`, `scripts/run_all.py`. Реальных LLM-вызовов нет: ИИ подключается через `PairJudge` и `RowMatcher` (заглушки `NoopJudge`, `NoopRowMatcher`), в тестах и в `evaluate.py --ai-ceiling` фейковые судьи по эталону. Интерфейса (Streamlit) и деплоя ещё нет. Тестов 228.
+**Состояние на 04.10.2026.** Бэкенд готов целиком: ingestion, нормализация, matching (три состояния строки), четыре проверки, `issues`, views `position_status` и `issues_view`, `src/pipeline.py` (`run_pipeline`), `scripts/evaluate.py`, `scripts/run_all.py`. ИИ-слой `src/llm/` (клиент Gemini, кэш `data/cache/llm/`, повтор, режим только кэш, `GeminiPairJudge`) написан и проверен только на фейковом клиенте; реальный API не вызывался (первый прогон: `scripts/run_llm.py`, вручную). `GeminiRowMatcher` (пачки до `llm.row_batch_size` строк, кэш по строке, проверки кодом) написан так же, на фейковом клиенте; оценка по кэшу без API: `scripts/eval_pairs.py`, `scripts/evaluate.py --gemini-cache`; в `evaluate.py --ai-ceiling` фейковые судьи по эталону. Интерфейса (Streamlit) и деплоя ещё нет. Тестов 312.
 
 **Готово (в `main`, тесты проходят):**
 - `docs/synthetic_spec.md`: проект, шаблоны, единицы, список 12 расхождений и 6 ловушек, правила ключа и `kind`, порядок сопоставления, метрики `evaluate.py`, светофор и влияние на бюджет.
 - `config/`: `units.yaml`, `templates.yaml` (шаблоны `vor_a`, `vor_b`, `estimate_a`, `contract_a`, `act_a`, `act_b`, а также `act_c` только как конфиг), `rules.yaml` (пороги, порядок сопоставления, валюта, формулы, режимы `evaluate`), `synonyms.yaml`.
 - `scripts/generate_synthetic.py`: 9 xlsx в `data/synthetic/`, `data/ground_truth.csv` (12), `data/traps.csv` (6), `data/expected_status.csv` (47 ключей: 10 красных, 6 жёлтых, 31 зелёный).
-- Тесты (228): генератор и ground truth, прототип правила про материалы, конфиги и спецификация, нормализация, ingestion, dq, `act_c`, matching, судьи, проверки (допуски на границе), views, pipeline, evaluate, run_all.
+- Тесты (233): генератор и ground truth, прототип правила про материалы, конфиги и спецификация, нормализация, ingestion, dq, `act_c`, matching, судьи, проверки (допуски на границе), views, pipeline, evaluate, run_all.
 - `src/config.py` (загрузка конфигов), `src/normalize` (единицы и множители, названия, числа, даты), `src/ingestion` (`parse.py` читает Excel по `templates.yaml`, `items.py` строит строки `items`, `pipeline.py` пишет в SQLite), `src/quality/checks.py` (dq).
 - `scripts/ingest.py data/synthetic --db data/cache/demo.db`: по файлам прочитано, не распознано, dq не пройдено; `items` по `doc_type` (act 80, contract 1, estimate 50, vor 50, всего 181). `scripts/verify_ingestion.py`: сверка `items` с журналом генератора (строки, количество, цена, сумма), 37 из 37 строк `related_rows` из GT, суммы ВОР-2 после множителей, итог `act_2` (6 485 749,6) не в `items`. `*.db` в `.gitignore`.
 - Шаблон `act_c` проверен на вымышленной книге в памяти (`tests/test_ingestion_act_c.py`).
 - `src/matching`: `names.py` (словарь, `must_match_tokens`), `groups.py` (строки одного ключа внутри документа суммируются, полный дубль не суммируется), `matcher.py` (exact -> synonyms -> fuzzy, один к одному, два прохода по kind, кандидаты для LLM), `store.py` (запись в `matches`, `items.work_key` = ключ строки ВОР, staging-таблицы), `judge.py` (`PairJudge`, `NoopJudge`, `resolve_candidates`), `row_matcher.py` (`RowMatcher`, `NoopRowMatcher`, `resolve_rows`: ИИ выбирает ключ из всего списка ВОР для строк ambiguous и absent).
 - `scripts/match.py --db data/cache/demo.db --mode rules_only`: сколько сопоставлено по методам, кандидаты для LLM, список «не сопоставлено» (файл:лист:строка), пороги 85 и 90. `scripts/verify_matching.py [-v]`: сравнение с эталоном генератора по строкам (правильно, ложные склейки, ложные «не сопоставлена»).
-- `src/rules/checks.py`: четыре проверки (объём накопительно по датам актов, средневзвешенная цена по ключу в одном акте против сметы, `absent` = missing_in_vor, акт позже срока). `issues` + `staging_issues_ext` (лист, `impact_som`, `confidence`, даты `late_act`). `src/rules/views.py`: `position_status` (светофор, колонка `review_rows`) и `issues_view`. Все пороги, допуски и тексты `explanation` в `config/rules.yaml` (`issues`, `volume_exceeded`, `price_increase`, `late_act`).
+- `src/rules/checks.py`: четыре проверки (объём накопительно по датам актов, средневзвешенная цена по ключу в одном акте против сметы, `absent` = missing_in_vor, акт позже срока). `issues` + `staging_issues_ext` (лист, `impact_som`, `confidence`, даты `late_act`). `src/rules/views.py`: `position_status` (светофор; колонки `name`, `unit_label` для показа и `review_rows`) и `issues_view`. Все пороги, допуски и тексты `explanation` в `config/rules.yaml` (`issues`, `volume_exceeded`, `price_increase`, `late_act`).
 - `src/pipeline.py`: `run_pipeline(source_dir, db_path, mode, judge=None, row_matcher=None, use_synonyms=True, threshold=None)` -> сводка (проверено N, не распознано M, не сопоставлено K из них требует проверки A, не сопоставимо L, расхождений Z, влияние на бюджет, режим, баннер, предупреждение). Пишет `runs` и view `run_summary`. Приложению хватает этого вызова и views `position_status`, `issues_view`, `run_summary`. Повторный запуск не дублирует данные.
 - `scripts/run_all.py [--mode llm --ai-ceiling]` (сквозной сценарий в консоли) и `scripts/evaluate.py [--ai-ceiling] [-v]`: найдено X из 12, ложные срабатывания (и низкой уверенности), полнота missing_in_vor, ловушки, ложные «не сопоставлено», причины ненайденных GT, таблица «без ИИ / с ИИ» (spec §8).
 - **Цифры evaluate (04.10)**: без ИИ со словарём 8 из 12 (порог 90) и 9 из 12 (порог 85), 10 ложных срабатываний (все `missing_in_vor` низкой уверенности), полнота missing_in_vor 2 из 2, ловушки 0 из 6; без словаря 6 из 12; с ИИ (потолок по эталону, не оценка модели) 12 из 12, 0 ложных. Не найдены без ИИ GT-1, 5, 8 (и GT-6 при пороге 90): строки актов остались `ambiguous`, сравнивать не с чем.
 
-**Не готово:** Streamlit и деплой, реальные реализации `PairJudge`, `RowMatcher` и ИИ-объяснений/отчёта на Gemini (с кэшем и проверкой JSON), шаблон `act_c` в генераторе (в `docs/backlog.md`).
+**Не готово:** Streamlit и деплой, живой прогон `GeminiPairJudge` и `GeminiRowMatcher` и заполненный кэш (версии промтов `pair-v3`, `row-v1`), ИИ-объяснения/отчёт на Gemini (на том же клиенте `src/llm/client.py`), шаблон `act_c` в генераторе (в `docs/backlog.md`).
 
 **Следующие шаги по порядку (план 05–06.10):**
 1–3. ~~Ingestion, нормализация, загрузка в SQLite~~ (готово, см. выше).
@@ -241,7 +242,7 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 - Схема: `quantity_raw`, `contractor`, `items.kind`, `documents.currency` (`docs/schema_change_proposal.md`).
 - Хостинг (Streamlit Community Cloud или Hugging Face Spaces), лимиты не проверены.
 - Gemini теперь основа ИИ-функций (раздел 3). Открыто: модель и лимиты бесплатного тарифа на сегодняшнюю дату, ключ в secrets хостинга, `llm.min_confidence`.
-- Публичный или приватный репозиторий (в `docs/real_templates_findings.md` номер реального тендера).
+- Публичный или приватный репозиторий (в текущих файлах идентификаторов реального тендера нет, но они остались в истории git, коммит `a898171`).
 - Источники записей `synonyms.yaml` («источник не подтверждён») до 07.10.
 
 **Известные пробелы и риски:**
