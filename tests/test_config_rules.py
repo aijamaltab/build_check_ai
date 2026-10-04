@@ -277,3 +277,25 @@ def test_spec_describes_states_similarity_and_row_matcher():
                    "Многосигнальный скоринг", "не внесён", "`staging_match_rows.state`", "summary_with_review_template"):
         assert phrase in SPEC, phrase
     assert "пять строк акта №3 (позиции №10, 19, 20, 31, 35) остаются ложными" not in SPEC    # неверное ожидание убрано
+
+
+# ---------- проверки, issues, evaluate: тексты и пороги в конфиге, фразы в спецификации ----------
+def test_rules_have_issue_texts_severity_and_summary_template():
+    i = RULES["issues"]
+    assert set(i["explanations"]) >= {"volume_exceeded", "price_increase", "missing_in_vor", "late_act"}
+    for text in i["explanations"].values():
+        assert not any(bad in text.lower() for bad in ("нарушен", "мошенн", "хищен"))
+    for key in ("volume_exceeded", "price_increase", "missing_in_vor", "late_act"):
+        assert "Возможное расхождение" in i["explanations"][key] and "Требует проверки" in i["explanations"][key]
+    assert i["missing_in_vor"]["severity_unconfirmed"] != "high" and i["missing_in_vor"]["severity_confirmed"] == "high"
+    assert "Без ИИ" in i["missing_in_vor"]["low_confidence_note"] and "{a}" in i["rules_only_status_caveat"]
+    assert all(f"{{{k}}}" in i["summary_run_template"] for k in ("n", "m", "k", "a", "l", "z", "impact", "mode"))
+    assert RULES["late_act"]["severity"] in RULES["severity_levels"] and i["severity_default"] in RULES["severity_levels"]
+
+
+def test_spec_describes_issue_storage_views_and_evaluate_results():
+    for phrase in ("`staging_issues_ext`", "**лист** (в `issues` его нет)", "`review_rows`", "Без ИИ, низкая уверенность, требует проверки",
+                   "потолок, не оценка модели", "Какие GT не найдены без ИИ и почему", "Полнота `missing_in_vor`",
+                   "(низкой уверенности)", "Ловушки не сработали", "run_pipeline", "ориентировочный"):
+        assert phrase in SPEC, phrase
+    assert "Значения подставляет прогон, до него в таблице нет цифр" not in SPEC           # таблица заполнена результатами прогона
