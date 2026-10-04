@@ -104,3 +104,49 @@ def test_vor_markers_and_names(parsed):
     assert not any("/прим/" in i.name_norm for i in items)
     assert any("/прим/" in i.work_name_raw for i in items)              # исходное название сохранено
     assert all(i.kind_hint == "work" for i in parsed["vor_1.xlsx"][1])
+
+
+# ---------- смета и договор ----------
+def test_estimate_rows_prices_and_total(synth, parsed):
+    doc, items = parsed["estimate.xlsx"]
+    assert doc.template == "estimate_a" and doc.doc_type == "estimate" and len(items) == 50
+    check_file_against_log(synth, parsed, "estimate.xlsx")
+    # цена за единицу нормы делится на множитель: «100 шт.» 170 000 -> 1 700 за штуку
+    lamp = next(i for i in items if i.name_norm == "установка светодиодных светильников")
+    assert (lamp.quantity, lamp.unit_price, lamp.unit_norm) == (210, 1700, "pcs")
+    # итог «Итого по смете» это не позиция: он нужен только для dq «сумма строк = итог»
+    assert doc.total_amount == pytest.approx(sum(i.amount for i in items if i.amount), abs=0.01)
+    assert not any(i.name_norm.startswith("итого") for i in items)
+
+
+def test_contract_is_one_item_with_deadline_and_total(parsed):
+    doc, items = parsed["contract.xlsx"]
+    assert doc.doc_type == "contract" and len(items) == 1
+    c = items[0]
+    assert (c.work_name_raw, c.doc_date, c.amount) == ("Договор", "2025-09-30", 13954000)
+    assert c.source_row == 6 and c.quantity is None and c.unit_price is None
+
+
+# ---------- акты ----------
+@pytest.mark.parametrize("n,template,count,date", [(1, "act_a", 24, "2025-05-31"), (2, "act_b", 28, "2025-06-30"),
+                                                   (3, "act_a", 24, "2025-08-31"), (4, "act_b", 2, "2025-10-17"),
+                                                   (5, "act_a", 2, "2025-11-14")])
+def test_acts_match_generator(synth, parsed, n, template, count, date):
+    file = f"act_{n}.xlsx"
+    doc, items = parsed[file]
+    assert doc.template == template and doc.doc_type == "act" and len(items) == count
+    assert {i.doc_date for i in items} == {date} and doc.date_row == synth[1].act_title_row[n]
+    check_file_against_log(synth, parsed, file)
+
+
+def test_act_total_row_is_not_an_item_and_equals_sum(parsed):
+    doc, items = parsed["act_2.xlsx"]
+    assert doc.total_amount == 6485749.6
+    assert sum(i.amount for i in items if i.amount) == pytest.approx(6485749.6, abs=0.01)
+    assert not any("итого" in i.name_norm for i in items)
+
+
+def test_act_b_unit_with_multiplier(parsed):
+    """Акт №2 пишет штукатурку стен в «100 м2»: 17,6 -> 1 760 м2, цена 31 000 -> 310."""
+    it = next(i for i in parsed["act_2.xlsx"][1] if i.name_norm == "штукатурка стен ц/п раствором")
+    assert (it.unit_raw, it.quantity_raw, it.quantity, it.unit_price, it.unit_norm) == ("100 м2", "17.6", 1760, 310, "m2")
