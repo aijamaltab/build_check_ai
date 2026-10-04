@@ -183,3 +183,75 @@ def test_schema_proposal_and_backlog_mention_currency():
     backlog = (ROOT / "docs" / "backlog.md").read_text(encoding="utf-8")
     for phrase in ("Конвертация валют", "круглую сумму", "Генератор шаблона акта В"):
         assert phrase in backlog
+
+
+# ---------- ИИ как основа продукта: блок llm, фразы в документах (CLAUDE.md §3, spec §10) ----------
+CLAUDE = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+BACKLOG = (ROOT / "docs" / "backlog.md").read_text(encoding="utf-8")
+LLM_KEYS = ["model", "temperature", "cache_dir", "schema_version", "max_retries", "timeout", "modes", "functions"]
+
+
+def test_rules_have_llm_block_with_required_keys():
+    llm = RULES["llm"]
+    for key in LLM_KEYS:
+        assert key in llm, key
+    assert llm["temperature"] == 0
+    assert llm["modes"] == ["llm", "rules_only"] and llm["default_mode"] == "llm"
+    assert set(llm["functions"]) == {"matching", "template_reading", "explanations", "report"}
+    assert all(isinstance(v, bool) for v in llm["functions"].values())
+    assert llm["max_retries"] >= 0 and llm["timeout"] > 0 and llm["schema_version"]
+    assert llm["cache_dir"].startswith("data/cache")
+    assert 0 < llm["min_confidence"] < 1 and llm["rules_only_banner"]
+
+
+def test_llm_block_marks_model_and_limits_for_checking_and_has_no_secret():
+    text = (ROOT / "config" / "rules.yaml").read_text(encoding="utf-8")
+    block = text[text.index("\nllm:"):text.index("# Режимы evaluate.py")]
+    assert block.count("проверить на сегодняшнюю дату") >= 2          # модель и лимиты
+    assert "AIza" not in text                                            # ключи Google API начинаются так
+    assert RULES["llm"]["api_key_env"].isupper() and "KEY" in RULES["llm"]["api_key_env"]   # только имя переменной
+
+
+def test_llm_modes_match_runs_table_and_matching_skip_mode():
+    from src.db import SCHEMA
+    for mode in RULES["llm"]["modes"]:
+        assert f"'{mode}'" in SCHEMA                                     # те же значения, что runs.mode
+    assert RULES["matching"]["skip_llm_in_modes"] == ["rules_only"]
+    assert RULES["llm"]["cache_dir"] == "data/cache/llm"
+
+
+def test_spec_has_ai_functions_section():
+    for phrase in ("## 10. ИИ-функции", "LLM никогда не считает числа", "режим `rules_only`", "режиме `llm`",
+                   "Функция «а»", "Функция «б»", "Функция «в»", "same_work", "confidence", "reason",
+                   "`matches`", "`method = llm`", "первые 20 строк", "header_row", "column_mapping", "section_rows",
+                   "total_rows", "currency", "Вход только из таблицы `issues`", "Числа **берутся из таблицы",
+                   "Температура 0", "Кэш по хешу запроса", "`data/cache/llm/`", "Проверка схемы JSON",
+                   "Ключ только из переменных окружения", "Разбор одного PDF через Gemini",
+                   "Чат по отчёту"):
+        assert phrase in SPEC, phrase
+
+
+def test_spec_evaluate_has_pitch_table_without_ai_and_with_ai():
+    for phrase in ("### Итоговая таблица для питча «без ИИ / с ИИ»", "`no_synonyms`", "`synonyms`", "`synonyms_llm`",
+                   "Найдено из 12", "Ложные срабатывания", "Ложные «не сопоставлено»",
+                   "словарь и `must_match_tokens` составлены по тем же названиям"):
+        assert phrase in SPEC, phrase
+
+
+def test_claude_md_states_ai_principle_scope_and_definition_of_done():
+    assert "ИИ читает, понимает и объясняет; обычный код считает и проверяет" in CLAUDE
+    assert "LLM никогда не считает числа" in CLAUDE
+    assert "`rules_only`" in CLAUDE and "ИИ-режим недоступен, использован базовый режим" in CLAUDE
+    assert "необязательный слой" not in CLAUDE                         # старая формулировка убрана
+    assert "ИИ-функции видны в демо; `evaluate.py` сравнивает режимы без ИИ и с ИИ" in CLAUDE
+    freeze = CLAUDE[CLAUDE.index("## 4. Заморозка"):CLAUDE.index("## 5. Стек")]
+    for phrase in ("ИИ-сопоставление спорных пар", "ИИ-чтение незнакомого шаблона Excel", "ИИ-объяснения красных расхождений"):
+        assert phrase in freeze, phrase
+    assert "Требование ментора" in CLAUDE[CLAUDE.index("## 1. "):CLAUDE.index("## 2. ")]
+
+
+def test_backlog_has_ai_ideas_and_no_chat():
+    for phrase in ("Разбор PDF через Gemini", "Живой запуск на новом файле во время питча",
+                   "Чат по отчёту (НЕ делаем)", "ChatGPT для X"):
+        assert phrase in BACKLOG, phrase
+    assert "ChatGPT для X" in SPEC or "ChatGPT для X" in CLAUDE
