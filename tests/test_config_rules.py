@@ -255,3 +255,25 @@ def test_backlog_has_ai_ideas_and_no_chat():
                    "Чат по отчёту (НЕ делаем)", "ChatGPT для X"):
         assert phrase in BACKLOG, phrase
     assert "ChatGPT для X" in SPEC or "ChatGPT для X" in CLAUDE
+
+
+# ---------- состояния строки, правило «подмножество», сходство названий, RowMatcher ----------
+def test_rules_have_states_subset_and_similarity_keys():
+    m = RULES["matching"]
+    assert m["states"] == ["matched", "ambiguous", "absent"] and m["unmatched_issue_only_state"] == "absent"
+    assert m["ambiguous_dq_check"] and "{a}" in m["summary_with_review_template"]
+    assert "{k}" in m["summary_template"] and "{a}" not in m["summary_template"]        # старый шаблон сводки не менялся
+    assert 0 < m["subset_review_below"] <= 100 and m["subset_review_scope"] in ("always", "competitor")
+    assert m["name_similarity"] in ("plain", "stemmed") and m["stem_endings"] and m["stem_min_len"] >= 1
+    assert isinstance(m["competitor_review"], bool) and "монтаж" in m["candidate_ignore_words"]
+    assert m["must_match_tokens"]["missing_side"] in ("block", "allow") and m["must_match_tokens"]["llm_veto"] == ["patterns"]
+    assert "stop_words" not in m                                                           # стоп-слов нет (synonyms.yaml)
+    assert RULES["llm"]["functions"]["row_matching"] is True
+
+
+def test_spec_describes_states_similarity_and_row_matcher():
+    for phrase in ("`ambiguous`", "`absent`", "Только `absent`", "Правило «подмножество»", "### Сходство названий",
+                   "Стоп-слов нет", "Функция «а2»", "RowMatcher", "staging_llm_row_decisions", "ложные `absent`",
+                   "Многосигнальный скоринг", "не внесён", "`staging_match_rows.state`", "summary_with_review_template"):
+        assert phrase in SPEC, phrase
+    assert "пять строк акта №3 (позиции №10, 19, 20, 31, 35) остаются ложными" not in SPEC    # неверное ожидание убрано

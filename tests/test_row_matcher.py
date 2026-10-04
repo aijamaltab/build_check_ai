@@ -131,12 +131,13 @@ def test_code_rejects_bad_answers(db, key, confidence, outcome):
 def test_code_rejects_kind_mismatch(db):
     """Строка с признаком материала не может занять работу ВОР. В данных все материалы уже сопоставлены правилами,
     поэтому у одной неразрешённой группы признак материала выставляется вручную (подготовка теста)."""
-    group = db.execute("SELECT group_id, name, unit_norm FROM staging_match_groups WHERE doc_type != 'vor' "
+    group = db.execute("SELECT group_id, first_item_id FROM staging_match_groups WHERE doc_type != 'vor' "
                        "AND status = 'ambiguous' AND unit_norm = 'pcs' LIMIT 1").fetchone()
     db.execute("UPDATE staging_match_groups SET signal = 'material' WHERE group_id = ?", (group["group_id"],))
+    target = db.execute("SELECT source_file, source_row FROM items WHERE item_id = ?", (group["first_item_id"],)).fetchone()
 
     def answer(row, keys):
-        if row["name"] == group["name"]:
+        if (row["file"], row["row"]) == (target["source_file"], target["source_row"]):
             work = next(k for k in keys if k["kind"] == "work" and k["unit"] == "pcs")
             return {"key": work["key"], "confidence": 1.0, "reason": "тест"}
         return {"key": None, "confidence": 0.0, "reason": "не знаю"}
@@ -175,3 +176,19 @@ def test_rerun_of_matching_clears_row_decisions(db, synth):
     save_matching(db, compute_matching(load_rows(db, "demo"), CFG), "demo", CFG)
     assert q(db, "SELECT COUNT(*) FROM staging_llm_row_decisions") == [(0,)]
     assert q(db, "SELECT COUNT(*) FROM matches WHERE method = 'llm'") == [(0,)]
+
+
+def test_row_matcher_gets_price_and_quantity_context(db):
+    """Цена и количество передаются модели как контекст (слабые сигналы); решение остаётся за ИИ и проверкой кода."""
+    seen = {}
+
+    def answer(row, keys):
+        seen.setdefault("rows", []).append(row)
+        seen["keys"] = keys
+        return {"key": None, "confidence": 0.0, "reason": "не знаю"}
+
+    resolve_rows(db, Fixed(answer), CFG, "demo")
+    assert all({"unit_price", "quantity", "unit", "kind", "state"} <= set(r) for r in seen["rows"])
+    assert any(r["unit_price"] is not None for r in seen["rows"])                         # у строк актов цена есть
+    assert all({"plan_qty", "estimate_price"} <= set(k) for k in seen["keys"])
+    assert any(k["estimate_price"] for k in seen["keys"]) and all(k["plan_qty"] > 0 for k in seen["keys"])

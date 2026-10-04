@@ -51,7 +51,7 @@ def _valid(answer) -> bool:
 
 def _first_row(conn, group_id: int):
     return conn.execute(
-        "SELECT i.work_name_raw, i.source_file, i.source_sheet, i.source_row, i.quantity FROM staging_match_rows r "
+        "SELECT i.work_name_raw, i.source_file, i.source_sheet, i.source_row, i.quantity, i.unit_price FROM staging_match_rows r "
         "JOIN items i ON i.item_id = r.item_id WHERE r.group_id = ? ORDER BY i.source_row LIMIT 1", (group_id,)).fetchone()
 
 
@@ -60,8 +60,12 @@ def vor_key_list(conn, project_id: str) -> list:
     out = []
     for g in conn.execute("SELECT * FROM staging_match_groups WHERE project_id = ? AND doc_type = 'vor' ORDER BY group_id", (project_id,)):
         first = _first_row(conn, g["group_id"])
+        est = conn.execute("SELECT i.unit_price FROM staging_match_groups e JOIN items i ON i.item_id = e.first_item_id "
+                           "WHERE e.matched_group_id = ? AND e.doc_type = 'estimate' LIMIT 1", (g["group_id"],)).fetchone()
+        # plan_qty и estimate_price это контекст для модели (слабые сигналы); решает не формула, а ИИ, проверяет код
         out.append({"key": g["final_work_key"], "name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"],
-                    "kind": g["kind"], "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"]})
+                    "kind": g["kind"], "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"],
+                    "plan_qty": g["qty_sum"], "estimate_price": est["unit_price"] if est else None})
     return out
 
 
@@ -84,7 +88,7 @@ def resolve_rows(conn, matcher: RowMatcher, cfg: dict, project_id: str) -> RowRe
         first = _first_row(conn, g["group_id"])
         row = {"name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"], "kind": g["signal"],
                "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"],
-               "quantity": g["qty_sum"], "doc_type": g["doc_type"], "state": g["status"]}
+               "quantity": g["qty_sum"], "unit_price": first["unit_price"], "doc_type": g["doc_type"], "state": g["status"]}
         answer = matcher.match_row(row, vor_keys)
         stats.asked += 1
         if not _valid(answer):

@@ -71,8 +71,37 @@ class MatchResult:
         return "ambiguous" if any(c.doc.gid == group.gid for c in self.candidates) else "absent"
 
 
-def _scores(a: Group, b: Group):
-    return (fuzz.token_set_ratio(a.name, b.name), fuzz.token_sort_ratio(a.name, b.name))
+class Similarity:
+    """Сходство названий: plain (токены как есть) или stemmed (окончания и сокращения-префиксы, config matching.*)."""
+
+    def __init__(self, m: dict):
+        self.stemmed = m.get("name_similarity", "plain") == "stemmed"
+        self.endings = sorted(m.get("stem_endings", []), key=len, reverse=True)
+        self.min_stem = m.get("stem_min_len", 4)
+        self.min_prefix = m.get("prefix_abbreviation_min_len", 4)
+
+    def _stem(self, token: str) -> str:
+        for ending in self.endings:
+            if token.endswith(ending) and len(token) - len(ending) >= self.min_stem:
+                return token[: -len(ending)]
+        return token
+
+    def _tokens(self, text: str) -> list:
+        return [self._stem(t) for t in text.replace("(", " ").replace(")", " ").split()]
+
+    def __call__(self, a: Group, b: Group, drop=()):
+        """(token_set_ratio, token_sort_ratio) двух названий; drop: слова, которые не учитываются в сравнении."""
+        na, nb = (" ".join(w for w in x.name.split() if w not in drop) for x in (a, b))
+        if not self.stemmed:
+            return (fuzz.token_set_ratio(na, nb), fuzz.token_sort_ratio(na, nb))
+        ta, tb = self._tokens(na), self._tokens(nb)
+
+        def expand(own, other):
+            return [next((o for o in other if o != t and len(t) >= self.min_prefix and o.startswith(t)), t) for t in own]
+
+        ta, tb = expand(ta, tb), expand(tb, ta)
+        sa, sb = " ".join(ta), " ".join(tb)
+        return (fuzz.token_set_ratio(sa, sb), fuzz.token_sort_ratio(sa, sb))
 
 
 def compute_matching(rows: list, cfg: dict, use_synonyms: bool = True, threshold: float | None = None,
@@ -81,6 +110,9 @@ def compute_matching(rows: list, cfg: dict, use_synonyms: bool = True, threshold
     threshold = m["fuzzy_threshold"] if threshold is None else threshold
     lower, per_row = m["llm_lower_bound"], m["llm_candidates_per_row"]
     subset_below, subset_scope = m["subset_review_below"], m["subset_review_scope"]
+    competitor_review = m.get("competitor_review", False)
+    ignore_words = set(m.get("candidate_ignore_words", []))
+    scores = Similarity(m)
     norm = NameNormalizer(cfg["synonyms"], cfg["rules"], use_synonyms, missing_side)
     groups = build_groups(rows, norm, cfg)
     result = MatchResult(use_synonyms, threshold, norm.missing_side, groups)
@@ -92,16 +124,18 @@ def compute_matching(rows: list, cfg: dict, use_synonyms: bool = True, threshold
 
     def has_competitor(d, v):
         """Есть ли для строки d другая группа ВОР другого kind, достаточно похожая (путаница работы и материала)."""
-        return any(o.gid != v.gid and o.kind != v.kind and comparable(d, o) and _scores(d, o)[0] >= lower for o in vors)
+        return any(o.gid != v.gid and o.kind != v.kind and comparable(d, o) and scores(d, o)[0] >= lower for o in vors)
 
     def evaluate(d, v):
         """-> (score, score2, stage или None, конфликты). stage задан, если пару можно слить без ИИ."""
         if d.temp_key == v.temp_key:
             return 100.0, 100.0, "exact", []
-        s1, s2 = _scores(d, v)
+        s1, s2 = scores(d, v)
         conflicts = norm.conflicts(d.prepared, v.prepared) if use_synonyms else []
         if use_synonyms and s1 == 100 and s2 < subset_below and (subset_scope == "always" or has_competitor(d, v)):
             conflicts.append(("subset", f"подмножество слов (token_set 100, token_sort {s2:.0f} ниже {subset_below})"))
+        if use_synonyms and competitor_review and d.kind is None and s1 >= threshold and has_competitor(d, v):
+            conflicts.append(("competitor", f"рядом конкурент другого kind (работа и материал), оценка {s1:.0f}"))
         stage = "fuzzy" if s1 >= threshold and not conflicts else None
         return s1, s2, stage, conflicts
 
@@ -137,7 +171,7 @@ def compute_matching(rows: list, cfg: dict, use_synonyms: bool = True, threshold
                 if v.gid in taken or not comparable(d, v):
                     continue
                 s1, s2, _, conflicts = evaluate(d, v)
-                if s1 < lower:
+                if s1 < lower or (ignore_words and scores(d, v, ignore_words)[0] < lower):
                     continue
                 if norm.is_vetoed(conflicts):
                     result.blocked.append((d, v, s1, "; ".join(t for _, t in conflicts)))

@@ -229,7 +229,7 @@ def test_subset_rule_cable_material_goes_to_review_not_to_work(project):
     pair = res.pair_of(act3.gid)
     assert pair is None or pair.vor.gid != work.gid
     # а при отключённом правиле та же склейка возвращается (это то, что правило предотвращает)
-    off = compute_matching(project["rows"], cfg_with(subset_review_below=0))
+    off = compute_matching(project["rows"], cfg_with(subset_review_below=0, competitor_review=False, name_similarity="plain"))
     bad = [p for p in off.pairs if truth_of(p.doc, project["truth"]) != truth_of(p.vor, project["truth"])]
     assert len(bad) == 1 and truth_of(bad[0].doc, project["truth"]) == {"M36"} and bad[0].score == 100
 
@@ -273,5 +273,71 @@ def test_only_absent_is_a_missing_in_vor_candidate_in_real_data(project):
     res = compute_matching(project["rows"], CFG)
     true_missing = {g.first.item_id for g in res.groups if not g.is_vor and truth_of(g, project["truth"]) <= {"X1", "X2"}}
     absent = {g.first.item_id for g in res.absent}
-    assert true_missing <= absent                      # отмостка и видеонаблюдение ловятся как absent
+    assert true_missing <= absent                      # отмостка и видеонаблюдение ловятся как absent (кандидат на «монтаж» не строится)
     assert CFG["rules"]["matching"]["unmatched_issue_only_state"] == "absent"
+
+
+# ---------- сходство названий: стемминг и сокращения, без стоп-слов ----------
+def test_stemmed_similarity_handles_endings_and_abbreviations():
+    vor = row(1, "демонтаж дверных блоков", unit="pcs")
+    act = row(2, "демонтаж дверн. блоков", unit="pcs", doc_id=2, doc_type="act")          # сокращение: «дверн.» это начало «дверных»
+    stemmed = compute_matching([vor, act], CFG)
+    plain = compute_matching([vor, act], cfg_with(name_similarity="plain"))
+    assert len(stemmed.pairs) == len(plain.pairs) == 1
+    assert stemmed.pairs[0].score == 100 > plain.pairs[0].score                             # стемминг поднимает оценку пары
+    endings = [row(3, "утепление стен минераловатными плитами", unit="m2"),
+               row(4, "утепление стен минераловатными плитами", unit="m2", doc_id=2, doc_type="act")]
+    assert compute_matching(endings, CFG).pairs[0].stage == "exact"
+
+
+def test_verbs_are_not_stop_words_montage_is_not_demontage():
+    """Стоп-слова не удаляются: иначе «монтаж покрытия» и «демонтаж покрытий» становятся почти одинаковыми."""
+    vor = row(1, "демонтаж покрытий полов из линолеума и поливинилхлоридных плиток", unit="m2")
+    act = row(2, "монтаж покрытия из линолеума", unit="m2", doc_id=2, doc_type="act")
+    assert compute_matching([vor, act], CFG).pairs == []
+    assert not CFG["rules"]["matching"].get("stop_words")
+    assert "монтаж" in CFG["rules"]["matching"]["candidate_ignore_words"]                  # но кандидатов на одном глаголе не строим
+
+
+def test_candidate_is_not_built_on_a_shared_verb_only():
+    vor = row(1, "монтаж опалубки", unit="m2")
+    act = row(2, "монтаж отмостки вокруг здания", unit="m2", doc_id=2, doc_type="act")
+    res = compute_matching([vor, act], CFG)
+    assert res.pairs == [] and res.candidates == [] and res.state_of(res.unmatched[0]) == "absent"
+    # но с общим существенным словом кандидат остаётся
+    vor2 = row(4, "монтаж щитовой опалубки", unit="m2")
+    act2 = row(3, "монтаж опалубки колонн", unit="m2", doc_id=3, doc_type="act")
+    assert compute_matching([vor2, act2], CFG, threshold=95).candidates
+
+
+def test_competitor_review_pipes_material_does_not_take_the_work():
+    """«Трубы полипропиленовые ППР» (единица «м», признака материала нет) не должны занять работу «Прокладка трубопроводов…»,
+    когда в ВОР есть похожий материал «Трубы ППР»."""
+    work = row(1, "прокладка трубопроводов отопления из полипропиленовых труб диаметром до 32 мм", unit="m", kind="work")
+    material = row(2, "трубы ппр", unit="m", kind="material")
+    act = row(3, "трубы полипропиленовые ппр", unit="m", kind="work", doc_id=2, doc_type="act")
+    res = compute_matching([work, material, act], CFG)
+    assert all(p.vor.first.item_id != 1 for p in res.pairs)
+    off = compute_matching([work, material, act], cfg_with(competitor_review=False))
+    assert off.pairs                                                                        # правило включено не зря: без него пара есть
+
+
+def test_real_data_no_false_merges_and_numbers_are_never_touched(project):
+    """Matching не меняет ни одного числа и не склеивает разные работы (в том числе строки ловушек +3% объёма и +2% цены)."""
+    conn = get_connection(":memory:")
+    from tests.test_generate_synthetic import gen as g
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        g.generate(out_dir=tmp, meta_dir=tmp)
+        ingest_dir(conn, tmp, "demo", CFG)
+    before = conn.execute("SELECT item_id, quantity, unit_price, amount FROM items ORDER BY item_id").fetchall()
+    from src.matching import save_matching
+    res = compute_matching(load_rows(conn, "demo"), CFG)
+    save_matching(conn, res, "demo", CFG)
+    after = conn.execute("SELECT item_id, quantity, unit_price, amount FROM items ORDER BY item_id").fetchall()
+    assert [tuple(r) for r in before] == [tuple(r) for r in after]
+    for p in res.pairs:
+        assert truth_of(p.doc, project["truth"]) == truth_of(p.vor, project["truth"]), (p.doc.name, p.vor.name)
+    traps = {"17", "32", "6", "W1"}
+    trap_pairs = [p for p in res.pairs if truth_of(p.doc, project["truth"]) & traps]
+    assert trap_pairs                                                                       # ловушечные позиции сопоставляются правильно

@@ -92,11 +92,14 @@ def test_save_is_idempotent(synth):
     conn = get_connection(":memory:")
     ingest_dir(conn, synth[0], "demo", CFG)
     rows = load_rows(conn, "demo")
+    snapshots = []
     for _ in range(2):
         save_matching(conn, compute_matching(rows, CFG), "demo", CFG)
+        snapshots.append((q(conn, "SELECT COUNT(*) FROM matches"), q(conn, "SELECT COUNT(*) FROM staging_match_groups"),
+                          q(conn, "SELECT COUNT(*) FROM dq_checks WHERE check_name = ?", M["kind_unknown_dq_check"])))
+    assert snapshots[0] == snapshots[1] and snapshots[0][2][0][0] > 0           # повторный запуск не дублирует записи
     assert q(conn, "SELECT COUNT(*) FROM staging_match_run") == [(1,)]
     assert q(conn, "SELECT COUNT(*) FROM matches") == q(conn, "SELECT COUNT(*) FROM staging_matches_ext")
-    assert q(conn, "SELECT COUNT(*) FROM dq_checks WHERE check_name = ?", M["kind_unknown_dq_check"]) == [(6,)]
 
 
 # ---------- судья ----------
