@@ -186,21 +186,22 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 
 ## 15. Текущее состояние и следующие шаги (обновлять в конце каждой сессии)
 
-**Состояние на 04.10.2026.** Готова подготовительная часть: спецификация, конфиги, генератор синтетики с ground truth, тесты. Кода приложения (ingestion, matching, проверки, интерфейс) ещё нет, в `src/` только `db.py`.
+**Состояние на 04.10.2026.** Готовы подготовительная часть (спецификация, конфиги, генератор, ground truth) и **ingestion с нормализацией**: 9 синтетических xlsx загружаются в `items` в SQLite, сверка с генератором и `ground_truth.csv` сходится. Matching, проверки расхождений, views, `evaluate.py`, интерфейс и LLM ещё нет. Тестов 99.
 
 **Готово (в `main`, тесты проходят):**
 - `docs/synthetic_spec.md`: проект, шаблоны, единицы, список 12 расхождений и 6 ловушек, правила ключа и `kind`, порядок сопоставления, метрики `evaluate.py`, светофор и влияние на бюджет.
 - `config/`: `units.yaml`, `templates.yaml` (шаблоны `vor_a`, `vor_b`, `estimate_a`, `contract_a`, `act_a`, `act_b`, а также `act_c` только как конфиг), `rules.yaml` (пороги, порядок сопоставления, валюта, формулы, режимы `evaluate`), `synonyms.yaml`.
 - `scripts/generate_synthetic.py`: 9 xlsx в `data/synthetic/`, `data/ground_truth.csv` (12), `data/traps.csv` (6), `data/expected_status.csv` (47 ключей: 10 красных, 6 жёлтых, 31 зелёный).
-- Тесты: генератор и ground truth, прототип правила про материалы, конфиги и спецификация.
+- Тесты (99): генератор и ground truth, прототип правила про материалы, конфиги и спецификация, нормализация, ingestion, dq, `act_c`.
+- `src/config.py` (загрузка конфигов), `src/normalize` (единицы и множители, названия, числа, даты), `src/ingestion` (`parse.py` читает Excel по `templates.yaml`, `items.py` строит строки `items`, `pipeline.py` пишет в SQLite), `src/quality/checks.py` (dq).
+- `scripts/ingest.py data/synthetic --db data/cache/demo.db`: по файлам прочитано, не распознано, dq не пройдено; `items` по `doc_type` (act 80, contract 1, estimate 50, vor 50, всего 181). `scripts/verify_ingestion.py`: сверка `items` с журналом генератора (строки, количество, цена, сумма), 37 из 37 строк `related_rows` из GT, суммы ВОР-2 после множителей, итог `act_2` (6 485 749,6) не в `items`. `*.db` в `.gitignore`.
+- Шаблон `act_c` проверен на вымышленной книге в памяти (`tests/test_ingestion_act_c.py`).
 
-**Не готово:** ingestion, нормализация, загрузка в SQLite, matching, 4 проверки, views `position_status` и `issues_view`, `scripts/evaluate.py`, Streamlit и деплой, обёртка Gemini, шаблон `act_c` в генераторе (в `docs/backlog.md`).
+**Не готово:** matching, 4 проверки, views `position_status` и `issues_view`, `scripts/evaluate.py`, Streamlit и деплой, обёртка Gemini, шаблон `act_c` в генераторе (в `docs/backlog.md`).
 
 **Следующие шаги по порядку (план 05–06.10):**
-1. **Ingestion** (`src/ingestion`): читать файлы по `config/templates.yaml`. Шапка по `header_keywords`, служебные строки по `skip_row_keywords` и `skip_row_patterns`, разделы по `section_row_rule`, дубль колонки в ВОР-2, пометка «/прим/», договор в `items` одной строкой. Поля `seq`, `formula_raw`, `drawing_ref` остаются в staging.
-2. **Нормализация** (`src/normalize`): единицы и множители по `units.yaml`, цена за «100 шт.» делится на 100; названия по `synonyms.yaml`; `kind` (маркер «спец.» или единица-существительное); `work_key` в формате из `rules.yaml` (`matching.work_key_format`).
-3. **Загрузка в SQLite** по схеме из раздела 7 (одинаковые ключи в документе суммируются, дубль только при полном совпадении строки).
-4. **Matching** (`src/matching`): порядок `pipeline` и параметры из `rules.yaml`; один к одному; сначала внутри `kind`; скорер `token_set_ratio`, затем `token_sort_ratio`, `WRatio` запрещён; `must_match_tokens` из `rules.yaml`; строка без пары получает «не сопоставлена».
+1–3. ~~Ingestion, нормализация, загрузка в SQLite~~ (готово, см. выше).
+4. **Matching** (`src/matching`) на основе `items` и staging (`staging_items_ext.name_norm`, `kind_hint`); окончательный `work_key` задаёт matching, суммирование строк одного ключа внутри документа тоже здесь: порядок `pipeline` и параметры из `rules.yaml`; один к одному; сначала внутри `kind`; скорер `token_set_ratio`, затем `token_sort_ratio`, `WRatio` запрещён; `must_match_tokens` из `rules.yaml`; строка без пары получает «не сопоставлена».
 5. **Проверки** (`src/rules`): 4 проверки; цена по ключу средневзвешенная в пределах документа; при несовпадении валют проверки цены и суммы не выполняются; тексты `explanation` из `rules.yaml`.
 6. **Views** `position_status` и `issues_view`, затем **`scripts/evaluate.py`**: три режима и пороги 85 и 90, метрики из `docs/synthetic_spec.md`, §8. Цель на конец 06.10: `evaluate.py` выдаёт цифры (иначе правило вырезания из раздела 12).
 7. **Streamlit** и деплой (параллельно можно начать пустой Streamlit на 05.10).
@@ -214,6 +215,10 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 - Цена по ключу средневзвешенная; при разных валютах проверки цены и суммы не выполняются, валюты не конвертируем; формулы читаются с `data_only=True`.
 - Результаты `evaluate.py` на синтетике оптимистичны: словарь составлен по тем же названиям. Новые записи `synonyms.yaml` только из реальных документов, с комментарием «откуда».
 - Сводка в интерфейсе: «Проверено N позиций, не распознано M, не сопоставлено K, не сопоставимо L».
+- Ingestion (04.10): схема §7 и `src/db.py` не менялись. Согласованные поля лежат в `staging_items_ext` (`quantity_raw`, `kind_hint`, `name_norm`, `currency`, `unit_factor`, `formula_raw`, `drawing_ref`, `seq`) и `staging_documents_ext` (путь, sha256, шаблон, валюта, `date_source_row`, итог документа, счётчики).
+- `items.quantity` и `unit_price` после множителя; временный `work_key` по формату из `rules.yaml`; строки одного ключа в документе не суммируются (это в matching). Единицы-существительные дают `unit_norm = pcs` и `kind_hint = material`.
+- `late_act`: в GT это строка заголовка акта, в `items` её нет; номер хранится в `staging_documents_ext.date_source_row`, в `issues.source_row` брать его. У договора `source_row` это строка срока.
+- Файл с непройденной dq-проверкой получает `documents.status = error`; повторная загрузка стирает прошлую загрузку проекта. Читается первый лист книги; `KGS` не приравнен к «сом».
 
 **Открытые вопросы (решаем вдвоём):**
 - Схема: `quantity_raw`, `contractor`, `items.kind`, `documents.currency` (`docs/schema_change_proposal.md`).
@@ -223,6 +228,9 @@ Marts-представления (views, не таблицы; `db.py` не ме�
 - Источники записей `synonyms.yaml` («источник не подтверждён») до 07.10.
 
 **Известные пробелы и риски:**
+- Формулы с кэшированным значением проверены только книгой в памяти (значение подставлено в XML вручную), на файле из Excel не проверялись.
+- Файл неизвестного шаблона в `documents` не пишется (CHECK по `doc_type`), только в отчёт `ingest.py`.
+- В §0 и в README число тестов (32) устарело, поправить при следующем обновлении README.
 - В режиме со словарём пять строк акта №3 (позиции №10, 19, 20, 31, 35) ожидаемо остаются «не сопоставлены»; порог 90 добавляет ещё пары в зону LLM.
 - Названия реальных работ из образцов акта в репозитории не используются (есть нейтральная пара в тесте matching).
 - Структура реального акта (образцы получены не с портала, это один акт) описана в `docs/real_templates_findings.md`, §4; выводов про все акты нет.
