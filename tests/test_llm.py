@@ -1,5 +1,6 @@
 """ИИ-слой: клиент, кэш, повторы, GeminiPairJudge. Только фейковый transport: без сети и без ключа."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from src.pipeline import run_pipeline
 from tests.test_generate_synthetic import gen
 
 CFG = load_config()
+ROOT_DIR = Path(__file__).resolve().parents[1]
 LLM = CFG["rules"]["llm"]
 SECRET = "AIzaFAKE-secret-key-1234567890"
 GOOD = json.dumps({"same_work": True, "confidence": 0.95, "reason": "тот же бетон"})
@@ -56,7 +58,7 @@ def test_valid_answer_is_returned_and_cached(tmp_path):
     j = judge(client)
     assert j.judge_pair(*pair())["same_work"] is True
     assert (client.stats.calls, client.stats.errors, client.stats.cache_hits) == (1, 0, 0)
-    assert len(list((tmp_path / "cache").glob("*.json"))) == 1
+    assert len(list((tmp_path / "cache").glob("[!_]*.json"))) == 1
     assert j.judge_pair(*pair())["same_work"] is True            # повтор: из кэша, API не вызывается
     assert (client._transport.calls, client.stats.cache_hits) == (1, 1)
 
@@ -64,7 +66,7 @@ def test_valid_answer_is_returned_and_cached(tmp_path):
 def test_cache_record_has_model_prompt_version_time_and_no_secret(tmp_path):
     client, _ = make(tmp_path, GOOD, env={LLM["api_key_env"]: SECRET})
     judge(client).judge_pair(*pair())
-    text = next((tmp_path / "cache").glob("*.json")).read_text(encoding="utf-8")
+    text = next((tmp_path / "cache").glob("[!_]*.json")).read_text(encoding="utf-8")
     record = json.loads(text)
     assert record["model"] == LLM["model"] and record["prompt_version"] and record["created_at"] and record["answer"]
     assert SECRET not in text
@@ -89,7 +91,7 @@ def test_bad_answer_retries_once_then_no_answer(tmp_path, bad):
     client, sleeps = make(tmp_path, bad)
     assert judge(client).judge_pair(*pair()) is None
     assert (client.stats.calls, client.stats.errors, client.stats.no_answer) == (2, 2, 1)
-    assert len(sleeps) == 1 and list((tmp_path / "cache").glob("*.json")) == []   # плохой ответ не кэшируется
+    assert len(sleeps) == 1 and list((tmp_path / "cache").glob("[!_]*.json")) == []   # плохой ответ не кэшируется
 
 
 def test_bad_then_good_answer_succeeds_on_retry(tmp_path):
@@ -251,7 +253,7 @@ def test_quota_errors_and_no_answers_are_never_cached(tmp_path):
     client, _ = make(tmp_path, QuotaError(5), cfg_over={"quota_abort_after": 99})
     assert judge(client).judge_pair(*pair()) is None
     assert client.stats.quota_errors == 2 and client.stats.no_answer == 1
-    assert list((tmp_path / "cache").glob("*")) == []
+    assert list((tmp_path / "cache").glob("[!_]*")) == []
     # квота вернулась: тот же вопрос теперь получает ответ, а не «нет решения» из кэша
     client._transport = FakeTransport(GOOD)
     assert judge(client).judge_pair(*pair())["same_work"] is True
@@ -367,3 +369,79 @@ def test_run_llm_script_complete_run_has_no_incomplete_warning(synth, tmp_path, 
     code = run_llm.main(["--source", str(synth), "--db", str(tmp_path / "r2.db"), "--pause", "0"])
     out = capsys.readouterr().out
     assert code == 0 and "НЕПОЛНЫЙ" not in out
+
+
+# ---------- таблица лимитов, пауза по rpm, суточный счётчик ----------
+def test_config_has_limits_table_and_default_model():
+    assert LLM["model"] == "gemini-3.1-flash-lite" and "preview" not in LLM["model"]
+    assert LLM["limits"]["gemini-3.1-flash-lite"] == {"rpm": 15, "rpd": 500}
+    assert LLM["limits"]["gemini-2.5-flash"] == {"rpm": 5, "rpd": None}
+    assert LLM["limits"]["gemini-2.5-flash-lite"] == {"rpm": 10, "rpd": 20}
+    assert LLM["limits"]["gemini-3-flash"] == {"rpm": 5, "rpd": 20}
+    text = (ROOT_DIR / "config" / "rules.yaml").read_text(encoding="utf-8")
+    assert "04.10.2026" in text and "перепроверять" in text
+
+
+def test_pause_is_60_over_rpm_with_margin_and_overridable(tmp_path):
+    client = LlmClient(LLM, cache=LlmCache(tmp_path / "c"), env={})
+    assert client.call_pause == pytest.approx(5.0)                       # 15 rpm: 60/15 * 1.25
+    assert LlmClient({**LLM, "model": "gemini-2.5-flash"}, cache=LlmCache(tmp_path / "c"), env={}).call_pause == pytest.approx(15.0)
+    assert LlmClient({**LLM, "model": "unknown-model"}, cache=LlmCache(tmp_path / "c"), env={}).call_pause == LLM["fallback_pause_seconds"]
+    assert LlmClient({**LLM, "call_pause_seconds": 2}, cache=LlmCache(tmp_path / "c"), env={}).call_pause == 2
+
+
+def daily_client(tmp_path, rpd, day="2026-10-04", transport=None, **over):
+    cfg = {**LLM, "model": "m-limited", "limits": {"m-limited": {"rpm": 60, "rpd": rpd}}, "call_pause_seconds": 0, **over}
+    return LlmClient(cfg, transport=transport or FakeTransport(GOOD), cache=LlmCache(tmp_path / "cache"),
+                     sleep=lambda s: None, env={}, today=lambda: day)
+
+
+def test_daily_counter_is_stored_in_service_file_without_secrets_and_not_counted_as_cache(tmp_path):
+    client = daily_client(tmp_path, 100)
+    j = judge(client)
+    j.judge_pair(*pair("Бетон М300"))
+    j.judge_pair(*pair("Бетон М350"))
+    usage = tmp_path / "cache" / "_usage.json"
+    data = json.loads(usage.read_text(encoding="utf-8"))
+    assert data == {"date": "2026-10-04", "models": {"m-limited": 2}}
+    assert len(list((tmp_path / "cache").glob("[!_]*.json"))) == 2          # служебный файл не запись кэша
+    only_usage = LlmCache(tmp_path / "u")
+    only_usage.dir.mkdir()
+    (only_usage.dir / "_usage.json").write_text("{}", encoding="utf-8")
+    assert only_usage.is_empty()
+
+
+def test_daily_counter_survives_restart_and_resets_next_day(tmp_path):
+    judge(daily_client(tmp_path, 100)).judge_pair(*pair())
+    assert daily_client(tmp_path, 100).usage.used("m-limited") == 1
+    assert daily_client(tmp_path, 100, day="2026-10-05").usage.used("m-limited") == 0
+
+
+def test_warning_near_rpd_and_stop_at_rpd(tmp_path):
+    client = daily_client(tmp_path, 5)
+    j = judge(client)
+    for i in range(3):
+        j.judge_pair(*pair(f"Бетон М{300 + i}"))
+    assert client.warnings == []                                           # 3 из 5 = 60%
+    j.judge_pair(*pair("Бетон М400"))                                      # перед четвёртым вызовом использовано 3, после 4 (80%)
+    j.judge_pair(*pair("Бетон М450"))
+    assert client.warnings and "4 из 5" in client.warnings[0]
+    assert client.stop_reason is None
+    assert j.judge_pair(*pair("Бетон М500")) is None                      # 5 из 5 использовано: стоп без вызова
+    assert client._transport.calls == 5 and "суточный лимит" in client.stop_reason and "5 из 5" in client.stop_reason
+
+
+def test_daily_limit_already_used_up_blocks_calls_but_not_cache(tmp_path):
+    seeded = daily_client(tmp_path, 1)
+    judge(seeded).judge_pair(*pair())
+    again = daily_client(tmp_path, 1)
+    assert judge(again).judge_pair(*pair())["same_work"] is True            # из кэша
+    assert judge(again).judge_pair(*pair("Окна ПВХ")) is None
+    assert again._transport.calls == 0 and again.stop_reason
+
+
+def test_unknown_rpd_means_no_daily_stop(tmp_path):
+    client = daily_client(tmp_path, None)
+    for i in range(3):
+        judge(client).judge_pair(*pair(f"Бетон М{300 + i}"))
+    assert client.stop_reason is None and client.warnings == []

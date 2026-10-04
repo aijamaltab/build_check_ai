@@ -32,7 +32,7 @@ def main(argv=None) -> int:
     parser.add_argument("--source", default=str(ROOT / "data" / "synthetic"))
     parser.add_argument("--db", default=str(ROOT / "data" / "cache" / "demo.db"))
     parser.add_argument("--cache-only", action="store_true", help="только кэш, без вызовов API и без ключа")
-    parser.add_argument("--pause", type=float, default=None, help=f"пауза между вызовами, с (в конфиге {llm['call_pause_seconds']})")
+    parser.add_argument("--pause", type=float, default=None, help="пауза между вызовами, с (по умолчанию 60 / rpm * запас по таблице limits для модели)")
     parser.add_argument("--max-calls", type=int, default=None, help="потолок вызовов к API за прогон")
     parser.add_argument("--model", default=None, help=f"модель на этот прогон (в конфиге {llm['model']})")
     args = parser.parse_args(argv)
@@ -50,6 +50,13 @@ def main(argv=None) -> int:
         return 1
 
     judge, row_matcher = build_default_ai(cfg)
+    client = getattr(judge, "client", None)
+    if client is not None:
+        limits = client.limits
+        print(f"Модель {client.model}: пауза {client.call_pause:.1f} с"
+              + (f", лимиты rpm {limits.get('rpm')}, rpd {limits.get('rpd') or 'неизвестен'} (предварительные цифры)" if limits else
+                 ", лимиты модели в config не заданы")
+              + f"; вызовов сегодня уже {client.usage.used(client.model)}")
     started = time.perf_counter()
     summary = run_pipeline(args.source, args.db, "llm", judge, row_matcher, cfg=cfg)
     elapsed = time.perf_counter() - started
@@ -60,7 +67,8 @@ def main(argv=None) -> int:
     answered = ai["pairs_asked"] - ai["no_answer"]
     print(f"\nИИ (модель {llm['model']}): пар отправлено судье {ai['pairs_asked']}, принято {ai['pairs_accepted']}")
     print("Счётчики: " + ", ".join(f"{name} {ai[name]}" for name in AI_COUNTERS))
-    client = getattr(judge, "client", None)
+    for warning in ai["warnings"]:
+        print("[!]", warning)
     if client is not None and client.last_error:
         print("Последняя ошибка API (ключ вырезан):", client.last_error)
     incomplete = bool(ai["quota_errors"] or ai["no_answer"] or ai["stop_reason"])

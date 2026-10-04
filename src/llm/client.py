@@ -6,13 +6,14 @@
 Сам вызов API спрятан в transport (callable), в тестах это фейк без сети.
 """
 import json
+import datetime as dt
 import os
 import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .cache import LlmCache, cache_key
+from .cache import LlmCache, UsageCounter, cache_key
 
 ROOT = Path(__file__).resolve().parents[2]
 TRUTHY = {"1", "true", "yes", "on"}
@@ -83,7 +84,7 @@ class GenaiTransport:
 
 class LlmClient:
     def __init__(self, llm_cfg: dict, *, transport=None, cache: LlmCache | None = None, sleep=time.sleep,
-                 clock=time.monotonic, env=None, root: Path = ROOT):
+                 clock=time.monotonic, env=None, root: Path = ROOT, today=lambda: dt.date.today().isoformat()):
         env = os.environ if env is None else env
         self.cfg = llm_cfg
         self.model = llm_cfg["model"]
@@ -97,6 +98,9 @@ class LlmClient:
         self.cache = cache or LlmCache(Path(cache_dir) if Path(cache_dir).is_absolute() else root / cache_dir,
                                        write=llm_cfg.get("cache_write", True))
         self._transport = transport
+        self.usage = UsageCounter(self.cache.dir / llm_cfg.get("usage_file", "_usage.json"), today,
+                                  persist=self.cache.write)
+        self.warnings = []
         self._sleep, self._clock = sleep, clock
         self._last_call = None
 
@@ -123,8 +127,38 @@ class LlmClient:
             self._transport = GenaiTransport(self._key, self.model, self.cfg["temperature"], self.cfg["timeout"])
         return self._transport(prompt, schema)
 
+    @property
+    def limits(self) -> dict:
+        return self.cfg.get("limits", {}).get(self.model) or {}
+
+    @property
+    def call_pause(self) -> float:
+        """Пауза между вызовами: из конфига или (если null) 60 / rpm * pause_margin по таблице лимитов модели."""
+        explicit = self.cfg.get("call_pause_seconds")
+        if explicit is not None:
+            return float(explicit)
+        rpm = self.limits.get("rpm")
+        if rpm:
+            return 60.0 / rpm * self.cfg.get("pause_margin", 1.25)
+        return float(self.cfg.get("fallback_pause_seconds", 5.0))
+
+    def _check_daily_limit(self) -> bool:
+        """False: суточный лимит модели исчерпан, прогон останавливается. Иначе при приближении к rpd предупреждение."""
+        rpd = self.limits.get("rpd")
+        if not rpd:
+            return True
+        used = self.usage.used(self.model)
+        if used >= rpd:
+            self.stop_reason = (f"достигнут суточный лимит запросов для {self.model}: {used} из {rpd} "
+                                "(по счётчику вызовов), повторите завтра или смените модель")
+            return False
+        warn = self.cfg.get("rpd_warn_fraction", 0.8)
+        if used >= rpd * warn and not self.warnings:
+            self.warnings.append(f"суточный лимит {self.model} на исходе: использовано {used} из {rpd} (по счётчику вызовов)")
+        return True
+
     def _pause_between_calls(self) -> None:
-        gap = self.cfg.get("call_pause_seconds", 0)
+        gap = self.call_pause
         if self._last_call is not None and gap:
             wait = gap - (self._clock() - self._last_call)
             if wait > 0:
@@ -148,8 +182,11 @@ class LlmClient:
             if max_calls and self.stats.calls >= max_calls:
                 self.stop_reason = f"достигнут потолок вызовов за прогон ({max_calls})"
                 break
+            if not self._check_daily_limit():
+                break
             self._pause_between_calls()
             self.stats.calls += 1
+            self.usage.add(self.model)
             rate_limited, delay = False, None
             try:
                 text = self._call_transport(prompt, schema)

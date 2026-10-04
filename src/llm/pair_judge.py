@@ -39,6 +39,10 @@ class GeminiPairJudge:
     def stop_reason(self):
         return self.client.stop_reason
 
+    @property
+    def warnings(self):
+        return self.client.warnings
+
     def _hard_conflict(self, a: dict, b: dict) -> str | None:
         """Причина, по которой пара точно не та же работа (проверка кодом, не моделью)."""
         if a.get("unit") != b.get("unit"):
