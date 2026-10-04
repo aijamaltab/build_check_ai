@@ -57,7 +57,8 @@ class GeminiPairJudge:
         side = lambda x: (x.get("name_raw") or x.get("name") or "", x.get("unit") or "-", x.get("kind") or "-")  # noqa: E731
         (an, au, ak), (bn, bu, bk) = side(a), side(b)
         payload = {"a": [normalize_text(an), au, ak], "b": [normalize_text(bn), bu, bk]}
-        prompt = PAIR_PROMPT.format(a_name=an, a_unit=au, a_kind=ak, b_name=bn, b_unit=bu, b_kind=bk)
+        shown = lambda kind: kind if kind in KNOWN_KINDS else "неизвестен"  # noqa: E731
+        prompt = PAIR_PROMPT.format(a_name=an, a_unit=au, a_kind=shown(ak), b_name=bn, b_unit=bu, b_kind=shown(bk))
         answer = self.client.ask("pair", PAIR_PROMPT_VERSION, payload, prompt, PAIR_SCHEMA, valid_pair_answer)
         if answer is None:
             return None

@@ -445,3 +445,53 @@ def test_unknown_rpd_means_no_daily_stop(tmp_path):
     for i in range(3):
         judge(client).judge_pair(*pair(f"Бетон М{300 + i}"))
     assert client.stop_reason is None and client.warnings == []
+
+
+# ---------- вид строки: signal, а не значение по умолчанию (pair-v2) ----------
+def test_prompt_version_is_v2_and_old_cache_is_not_reused(tmp_path):
+    from src.llm.cache import cache_key
+    from src.llm.prompts import PAIR_PROMPT_VERSION
+    assert PAIR_PROMPT_VERSION == "pair-v2"
+    assert cache_key("pair", "m", "pair-v1", 1, {"x": 1}) != cache_key("pair", "m", PAIR_PROMPT_VERSION, 1, {"x": 1})
+
+
+def test_row_without_kind_signal_is_described_without_work(synth, tmp_path):
+    import sqlite3
+    from src.matching.judge import _describe
+    run_pipeline(synth, tmp_path / "d.db", "rules_only")
+    conn = sqlite3.connect(tmp_path / "d.db")
+    conn.row_factory = sqlite3.Row
+    docs = conn.execute("SELECT group_id, signal, kind FROM staging_match_groups WHERE doc_type != 'vor'").fetchall()
+    unknown = [g for g in docs if g["signal"] is None]
+    assert unknown and any(g["kind"] == "work" for g in unknown)             # в БД по умолчанию стоит work
+    assert all(_describe(conn, g["group_id"])["kind"] is None for g in unknown)
+    materials = [g for g in docs if g["signal"] == "material"]
+    assert materials and all(_describe(conn, g["group_id"])["kind"] == "material" for g in materials)
+    vor = conn.execute("SELECT group_id FROM staging_match_groups WHERE doc_type = 'vor'").fetchall()
+    assert all(_describe(conn, g["group_id"])["kind"] in ("work", "material") for g in vor)
+
+
+def test_prompt_says_kind_unknown_instead_of_work(tmp_path):
+    seen = []
+    client, _ = make(tmp_path, GOOD)
+    client._transport = lambda prompt, schema: seen.append(prompt) or GOOD
+    a, b = pair(ak=None, bk="material")
+    judge(client).judge_pair(a, b)
+    assert "вид: неизвестен" in seen[0] and "вид: material" in seen[0]
+    assert seen[0].count("вид: work") == 0
+
+
+def test_cable_pair_with_unknown_act_kind_is_not_rejected_by_kind(tmp_path):
+    client, _ = make(tmp_path, GOOD)
+    a, b = pair("Кабель ВВГ-нг 3х2,5", "Кабель ВВГнг 3×2,5", unit="m", ak=None, bk="material")
+    out = judge(client).judge_pair(a, b)
+    assert out["same_work"] is True and "отклонено" not in out["reason"]
+    assert client.stats.rejected_by_check == 0
+
+
+def test_real_kind_conflict_known_on_both_sides_is_still_rejected(tmp_path):
+    client, _ = make(tmp_path, GOOD)
+    a, b = pair("Кабель ВВГ-нг 3х2,5", "Кабель ВВГнг 3×2,5", unit="m", ak="work", bk="material")
+    out = judge(client).judge_pair(a, b)
+    assert out["same_work"] is False and "вид различается" in out["reason"]
+    assert client.stats.rejected_by_check == 1

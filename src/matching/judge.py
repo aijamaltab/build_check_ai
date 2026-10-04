@@ -61,7 +61,10 @@ def _describe(conn, group_id: int) -> dict:
     first = conn.execute(
         "SELECT i.work_name_raw, i.source_file, i.source_sheet, i.source_row FROM staging_match_rows r "
         "JOIN items i ON i.item_id = r.item_id WHERE r.group_id = ? ORDER BY i.source_row LIMIT 1", (group_id,)).fetchone()
-    return {"name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"], "kind": g["kind"],
+    # kind строки документа вне ВОР: g["kind"] там значение по умолчанию (work), настоящий признак лежит в signal (None = неизвестен).
+    # У строк ВОР вид известен всегда (g["kind"]).
+    kind = g["kind"] if g["doc_type"] == "vor" else g["signal"]
+    return {"name_raw": first["work_name_raw"], "name": g["name"], "unit": g["unit_norm"], "kind": kind,
             "file": first["source_file"], "sheet": first["source_sheet"], "row": first["source_row"]}
 
 
