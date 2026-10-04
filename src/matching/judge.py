@@ -90,8 +90,9 @@ def resolve_candidates(conn, judge: PairJudge, cfg: dict, project_id: str) -> Re
                                          "doc_type": doc["doc_type"]})
         stats.asked += 1
         status = "rejected"
-        if not _valid(answer):
-            status, answer = "invalid", {"same_work": False, "confidence": 0.0, "reason": "ответ не по схеме"}
+        if not _valid(answer):                       # None: ИИ не ответил, строка остаётся ambiguous
+            reason = "ИИ не дал решения" if answer is None else "ответ не по схеме"
+            status, answer = "invalid", {"same_work": False, "confidence": 0.0, "reason": reason}
             stats.invalid += 1
         elif answer["same_work"] and answer["confidence"] >= min_conf:
             conflicts = norm.conflicts(norm.prepare(doc["name"]), norm.prepare(vor["name"]))

@@ -12,6 +12,7 @@ import json
 from src.config import load_config
 from src.db import get_connection
 from src.ingestion import ingest_dir
+from src.llm import AI_COUNTERS, build_default_ai
 from src.matching import (NoopJudge, NoopRowMatcher, compute_matching, load_rows, resolve_candidates, resolve_rows,
                           save_matching)
 from src.matching.store import summary_counts
@@ -37,8 +38,9 @@ def _label(obj, default):
 
 
 def run_pipeline(source_dir, db_path, mode: str = "rules_only", judge=None, row_matcher=None, *, use_synonyms: bool = True,
-                 threshold: float | None = None, project_id: str = "demo", cfg: dict | None = None) -> dict:
-    """-> сводка (словарь). judge: PairJudge, row_matcher: RowMatcher (оба необязательны)."""
+                 threshold: float | None = None, project_id: str = "demo", cfg: dict | None = None, auto_ai: bool = True) -> dict:
+    """-> сводка (словарь). judge: PairJudge, row_matcher: RowMatcher (оба необязательны). В режиме llm без судей берётся
+    настоящий Gemini-судья (ключ или кэш), auto_ai=False это запрещает."""
     cfg = cfg or load_config()
     rules = cfg["rules"]
     if mode not in rules["llm"]["modes"]:
@@ -47,13 +49,16 @@ def run_pipeline(source_dir, db_path, mode: str = "rules_only", judge=None, row_
     conn = get_connection(db_path)
     try:
         ingest_reports = ingest_dir(conn, source_dir, project_id, cfg)
+        if mode == "llm" and judge is None and row_matcher is None and auto_ai:
+            judge, row_matcher = build_default_ai(cfg)       # настоящий Gemini-судья (ключ или кэш), иначе rules_only
         ai_available = mode == "llm" and any(getattr(x, "available", False) for x in (judge, row_matcher) if x is not None)
         effective = "llm" if ai_available else "rules_only"
         banner = None if effective == "llm" else rules["llm"]["rules_only_banner"]
 
         result = compute_matching(load_rows(conn, project_id), cfg, use_synonyms, threshold)
         save_matching(conn, result, project_id, cfg, effective)
-        ai = {"pairs_asked": 0, "pairs_accepted": 0, "rows_asked": 0, "rows_accepted": 0, "rows_none": 0, "rows_rejected": 0}
+        ai = {"pairs_asked": 0, "pairs_accepted": 0, "rows_asked": 0, "rows_accepted": 0, "rows_none": 0, "rows_rejected": 0,
+              **dict.fromkeys(AI_COUNTERS, 0)}
         if effective == "llm":
             if judge is not None:
                 stats = resolve_candidates(conn, judge, cfg, project_id)
@@ -61,6 +66,11 @@ def run_pipeline(source_dir, db_path, mode: str = "rules_only", judge=None, row_
             if row_matcher is not None:
                 stats = resolve_rows(conn, row_matcher, cfg, project_id)
                 ai.update(rows_asked=stats.asked, rows_accepted=stats.accepted, rows_none=stats.none, rows_rejected=stats.rejected)
+            for ai_obj in (judge, row_matcher):                # счётчики клиента Gemini (у фейковых судей их нет)
+                counters = getattr(getattr(ai_obj, "stats", None), "as_dict", None)
+                if counters:
+                    for name, value in counters().items():
+                        ai[name] = max(ai[name], value)        # судья и матчер делят один клиент: считаем один раз
         checks = run_checks(conn, cfg, project_id, effective)
         create_views(conn, cfg)
 
