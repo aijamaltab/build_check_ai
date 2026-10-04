@@ -5,7 +5,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from ui.data import SEVERITY_COLOR, STATUS_ROW_FILL, fmt_num
+from ui.data import MAX_AI_PAIRS_ON_CARD, SEVERITY_COLOR, STATUS_ROW_FILL, fmt_conf, fmt_num
 
 
 def render(html: str) -> None:
@@ -55,6 +55,29 @@ def badge(text: str, kind: str = "") -> str:
     return f'<span class="badge {kind}">{escape(text)}</span>'
 
 
+DOC_ROLE = {"act": "Акт", "estimate": "Смета", "vor": "ВОР"}
+
+
+def ai_box_html(c: dict) -> str:
+    """Блок «Что сделал ИИ»: пары названий до и после (документ -> ВОР), уверенность и причина из ответа модели, либо «ИИ не нашёл пару»."""
+    lines = ""
+    for p in c["ai_pairs"][:MAX_AI_PAIRS_ON_CARD]:
+        meta = f"уверенность {fmt_conf(p['confidence'])}" + (f" · причина: {p['reason']}" if p["reason"] else "")
+        lines += (f'<div class="ai-pair"><div class="ai-names"><span class="ai-before">{DOC_ROLE.get(p["doc_type"], "Док.")}: «{escape(p["doc"])}»</span>'
+                  f'<span class="ai-arrow"> → </span><span class="ai-after">ВОР: «{escape(p["vor"])}»</span></div>'
+                  f'<div class="ai-meta">{escape(meta)}</div></div>')
+    extra = len(c["ai_pairs"]) - MAX_AI_PAIRS_ON_CARD
+    if extra > 0:
+        lines += f'<div class="ai-meta">и ещё {extra} пар(ы) названий</div>'
+    if c["ai_none"]:
+        n = c["ai_none"]
+        meta = f"уверенность {fmt_conf(n['confidence'])}" + (f" · причина: {n['reason']}" if n["reason"] else "")
+        lines += f'<div class="ai-pair"><div class="ai-names">ИИ просмотрел весь список ВОР и не нашёл пару</div><div class="ai-meta">{escape(meta)}</div></div>'
+    if not lines:
+        return ""
+    return f'<div class="ai-box"><div class="ai-title">Что сделал ИИ</div>{lines}</div>'
+
+
 def issue_card_html(c: dict) -> str:
     """Карточка расхождения: цветная полоса важности, название, бейджи, фраза, влияние, пометка, источники."""
     color = SEVERITY_COLOR[c["severity"]]
@@ -66,7 +89,7 @@ def issue_card_html(c: dict) -> str:
     return (f'<div class="issue-card"><div class="issue-bar" style="background:{color}"></div><div class="issue-body">'
             f'<div class="issue-title">{escape(c["title"])}</div><div>{badges}</div>'
             f'<div class="issue-phrase">{escape(c["phrase"])}</div>'
-            f'<div class="issue-impact">Влияние: {escape(c["impact_text"])}</div>{note}'
+            f'<div class="issue-impact">Влияние: {escape(c["impact_text"])}</div>{note}{ai_box_html(c)}'
             f'<div class="issue-src">{sources}</div></div></div>')
 
 
@@ -96,3 +119,31 @@ def style_positions(frame: pd.DataFrame):
         shown[col] = shown[col].map(fmt_num)
     styler = shown.style.apply(lambda row: [f"background-color: {STATUS_ROW_FILL[status[row.name]]}; color: #1B1B1B"] * len(row), axis=1)
     return styler.set_properties(subset=numeric, **{"text-align": "right"})
+
+
+def ai_line_html(text: str) -> str:
+    return f'<div class="ai-line">{escape(text)}</div>'
+
+
+def compare_html(rows: list, note: str) -> str:
+    """Блок «Без ИИ и с ИИ» в две колонки. rows: [(показатель, без ИИ, с ИИ)]."""
+    def column(title, idx, cls):
+        body = "".join(f'<div class="cmp-row"><span class="cmp-label">{escape(r[0])}</span><span class="cmp-value">{escape(r[idx])}</span></div>'
+                       for r in rows)
+        return f'<div class="cmp-col {cls}"><div class="cmp-title">{escape(title)}</div>{body}</div>'
+    return (f'<div class="cmp-grid">{column("Без ИИ (только правила)", 1, "")}{column("С ИИ", 2, "cmp-ai")}</div>'
+            f'<div class="note-small">{escape(note)}</div>')
+
+
+def examples_html(examples: list) -> str:
+    """Карточки «Как ИИ и код делят работу»: название в ВОР, в акте, правило кода, ответ ИИ, проверка кода."""
+    cards = ""
+    for e in examples:
+        vor = f"«{escape(e['vor'])}»" if e["vor"] else "такой позиции в ВОР не найдено"
+        cards += ('<div class="ex-card">'
+                  f'<div class="ex-row"><span class="ex-label">В ВОР</span><span>{vor}</span></div>'
+                  f'<div class="ex-row"><span class="ex-label">В акте</span><span>«{escape(e["doc"])}»</span></div>'
+                  f'<div class="ex-row"><span class="ex-label">Код (правило)</span><span>{escape(e["code_rule"])}</span></div>'
+                  f'<div class="ex-row ex-ai"><span class="ex-label">ИИ решил</span><span>{escape(e["ai"])}</span></div>'
+                  f'<div class="ex-row"><span class="ex-label">Код проверил</span><span>{escape(e["code_check"])}</span></div></div>')
+    return f'<div class="ex-grid">{cards}</div>'

@@ -31,13 +31,19 @@ def test_default_screen_is_llm_mode_with_13_cards_and_no_banner(llm_env):
     assert "Демо на синтетических данных" in html and "Режим: С ИИ (ответы Gemini из кэша)" in html
     assert 'class="banner"' not in html
     assert html.count('class="issue-card"') == 13
-    for text in ("Позиций проверено", "Возможных расхождений", "Возможное влияние на бюджет, сом", "Нужно проверить вручную",
+    for text in ("Позиций проверено", "Возможных расхождений", "Возможное влияние на бюджет, сом", "Позиции для проверки", "красные и жёлтые позиции",
                  "1 378 030", "Оценка размера возможных расхождений, не вывод о потерях"):
         assert text in html
     for label in ("Красные: 11 позиций", "Жёлтые: 7 позиций", "Зелёные: 30 позиций"):
         assert label in html
     assert "ИИ помог сопоставить" in html and "В актах 11,4 т при 9,5 т в ВОР (+20,0%)" in html
-    assert "ИИ читает и сопоставляет названия, обычный код считает и проверяет числа." in html
+    assert html.count("ИИ читает и сопоставляет названия, код считает и проверяет числа") == 1
+    assert "Нужно проверить вручную" not in html
+    assert "Без ИИ и с ИИ" in html and "Без ИИ (только правила)" in html and "8 из 12" in html and "12 из 12" in html
+    assert "Синтетические данные, оценка ориентировочная." in html
+    assert "Как ИИ и код делят работу" in html and html.count('class="ex-card"') == 6
+    assert html.count("Что сделал ИИ") >= 3 and "ИИ просмотрел весь список ВОР и не нашёл пару" in html
+    assert "уверенность 0,95" in html and "ВОР: «" in html
     assert "Прототип. Данные синтетические. Результат требует проверки специалистом." in html
     assert len(at.dataframe) == 1                                             # таблица позиций; расхождения карточками
 
@@ -53,6 +59,9 @@ def test_switch_to_without_ai_shows_rules_only_numbers(llm_env):
     assert html.count('class="issue-card"') == 18 and "366 600" in html and "1 086 110" in html
     assert "Красные: 12 позиций" in html and "Жёлтые: 25 позиций" in html and "Зелёные: 16 позиций" in html
     assert "Низкая уверенность, требует проверки" in html and "ИИ помог сопоставить" not in html
+    assert "Что сделал ИИ" not in html.split("Возможные расхождения", 1)[1]            # в режиме без ИИ в карточках блока ИИ нет
+    assert "Без ИИ и с ИИ" in html                                                      # сравнение режимов видно в обоих режимах
+    assert ">37<" in html                                                               # позиции для проверки: 25 жёлтых и 12 красных
 
 
 def test_table_view_uses_dataframe_instead_of_cards(llm_env):

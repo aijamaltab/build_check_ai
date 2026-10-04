@@ -5,7 +5,9 @@ run_summary, которые строит run_pipeline; здесь только �
 Всё, что не SQL (fmt_num, build_cards, filter_issues, chart_frames, ...), работает с датафреймами и не знает про Streamlit.
 """
 import json
+import re
 import sqlite3
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +31,8 @@ SOURCE_ROLE = {"vor": "ВОР", "estimate": "Смета", "act": "Акт", "cont
 LOW_CONFIDENCE_NOTE = "Низкая уверенность, требует проверки"
 AI_NOT_FOUND_NOTE = "ИИ не нашёл пару в ВОР, требует проверки"
 EMPTY = "—"
+ROOT = Path(__file__).resolve().parents[1]
+MAX_AI_PAIRS_ON_CARD = 3
 
 
 def connect_readonly(db_path) -> sqlite3.Connection:
@@ -42,7 +46,8 @@ def load_results(db_path, project_id: str = "demo") -> dict:
 
     summary: json из run_summary последнего прогона проекта плюс banner; пустой словарь, если прогонов нет.
     issues: issues_view плюс колонки sources (строки «роль · файл · лист · строка» по документам, где нашлось расхождение) и
-    ai_matched (пара названий склеена моделью). documents: файлы проекта и число непройденных проверок качества (диагностические
+    ai_matched (пара названий склеена моделью), ai_pairs (что сопоставил ИИ: название в документе, в ВОР, уверенность, причина) и
+    ai_none (ИИ не нашёл пару в ВОР: уверенность и причина). ai_examples: примеры разделения работы кода и ИИ. documents: файлы проекта и число непройденных проверок качества (диагностические
     записи «kind не определён» и «не сопоставлено, требует проверки» не считаются)."""
     cfg = load_config()
     diagnostic = (cfg["rules"]["matching"]["kind_unknown_dq_check"], cfg["rules"]["matching"]["ambiguous_dq_check"])
@@ -61,6 +66,17 @@ def load_results(db_path, project_id: str = "demo") -> dict:
         ai_keys = {r[0] for r in conn.execute(
             "SELECT DISTINCT m.work_key FROM matches m JOIN staging_matches_ext e ON e.match_id = m.match_id "
             "JOIN items i ON i.item_id = m.item_id WHERE i.project_id = ? AND e.stage IN ('llm', 'llm_row')", (project_id,))}
+        min_conf = cfg["rules"]["llm"]["min_confidence"]
+        ai_pair_rows = pd.read_sql_query(
+            "SELECT m.work_key, e.stage, e.reason, e.confidence, i.doc_type, i.work_name_raw AS doc_name, v.work_name_raw AS vor_name "
+            "FROM matches m JOIN staging_matches_ext e ON e.match_id = m.match_id JOIN items i ON i.item_id = m.item_id "
+            "JOIN items v ON v.item_id = m.matched_to_item_id WHERE i.project_id = ? AND e.stage IN ('llm', 'llm_row') ORDER BY m.match_id",
+            conn, params=(project_id,))
+        none_rows = pd.read_sql_query(
+            "SELECT i.source_file, i.source_sheet, i.source_row, d.confidence, d.reason FROM staging_llm_row_decisions d "
+            "JOIN staging_match_rows r ON r.group_id = d.group_id JOIN items i ON i.item_id = r.item_id "
+            "WHERE d.project_id = ? AND d.outcome = 'none' AND d.confidence >= ?", conn, params=(project_id, min_conf))
+        examples = collect_ai_examples(conn, project_id, cfg)
         marks = ",".join("?" for _ in diagnostic)
         documents = pd.read_sql_query(
             "SELECT d.doc_id, d.doc_type, d.file_name, d.status, "
@@ -69,7 +85,8 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "GROUP BY d.doc_id ORDER BY d.doc_id", conn, params=(*diagnostic, project_id))
     finally:
         conn.close()
-    return {"summary": summary, "issues": attach_context(issues, items, ai_keys), "positions": positions, "documents": documents}
+    issues = attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, cfg["synonyms"].get("strip_markers", []))
+    return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples)}
 
 
 # ---------- форматирование ----------
@@ -88,6 +105,11 @@ def fmt_pct(value, signed: bool = True) -> str:
     text = f"{abs(float(value)):.1f}".replace(".", ",")
     sign = ("+" if value >= 0 else "−") if signed else ""
     return f"{sign}{text}%"
+
+
+def fmt_conf(value) -> str:
+    """Уверенность ИИ: два знака после запятой («0,95»)."""
+    return EMPTY if value is None or pd.isna(value) else f"{float(value):.2f}".replace(".", ",")
 
 
 def fmt_date(iso) -> str:
@@ -142,6 +164,132 @@ def attach_context(issues: pd.DataFrame, items: pd.DataFrame, ai_keys: set) -> p
     return issues
 
 
+# ---------- что сделал ИИ ----------
+def _clean(name, markers) -> str:
+    text = str(name or "")
+    for marker in markers:
+        text = text.replace(marker, "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def attach_ai(issues: pd.DataFrame, pair_rows: pd.DataFrame, none_rows: pd.DataFrame, markers) -> pd.DataFrame:
+    """Колонки ai_pairs (пары названий «в документе -> в ВОР», которые сопоставил ИИ, по ключу позиции) и ai_none (ИИ не нашёл пару)."""
+    by_key = {}
+    for r in pair_rows.itertuples():
+        pairs = by_key.setdefault(r.work_key, [])
+        pair = {"doc_type": r.doc_type, "doc": _clean(r.doc_name, markers), "vor": _clean(r.vor_name, markers),
+                "confidence": None if pd.isna(r.confidence) else float(r.confidence), "reason": r.reason or "", "stage": r.stage}
+        if not any(p["doc"] == pair["doc"] and p["vor"] == pair["vor"] for p in pairs):
+            pairs.append(pair)
+    none_by_row = {(r.source_file, r.source_sheet, int(r.source_row)): {"confidence": float(r.confidence), "reason": r.reason or ""}
+                   for r in none_rows.itertuples()}
+    issues = issues.copy()
+    ai_pairs, ai_none = [], []
+    for _, r in issues.iterrows():
+        counted = r["issue_type"] in ("volume_exceeded", "price_increase")
+        ai_pairs.append(list(by_key.get(r["work_key"], [])) if counted else [])
+        ai_none.append(none_by_row.get((r["source_file"], r["source_sheet"], int(r["source_row"]))) if r["issue_type"] == "missing_in_vor" else None)
+    issues["ai_pairs"] = ai_pairs
+    issues["ai_none"] = ai_none
+    return issues
+
+
+def collect_ai_examples(conn, project_id: str, cfg: dict) -> list:
+    """Все решения ИИ из БД как примеры «правило кода -> ответ ИИ -> проверка кода» (отбор: pick_examples)."""
+    m = cfg["rules"]["matching"]
+    lo, hi = m["llm_lower_bound"], m["fuzzy_threshold"]
+    min_conf = cfg["rules"]["llm"]["min_confidence"]
+    labels = cfg["rules"]["issues"]["unit_labels"]
+    markers = cfg["synonyms"].get("strip_markers", [])
+    out = []
+    for r in conn.execute(
+            "SELECT c.candidate_id, c.score, c.status, c.judge_confidence, c.judge_reason, ia.work_name_raw AS doc_name, "
+            "iv.work_name_raw AS vor_name, ga.unit_norm FROM staging_match_candidates c "
+            "JOIN staging_match_groups ga ON ga.group_id = c.group_id JOIN staging_match_groups gv ON gv.group_id = c.candidate_group_id "
+            "JOIN items ia ON ia.item_id = ga.first_item_id JOIN items iv ON iv.item_id = gv.first_item_id "
+            "WHERE c.project_id = ? AND c.status IN ('accepted', 'rejected') ORDER BY c.candidate_id", (project_id,)):
+        doc, vor, conf = _clean(r[5], markers), _clean(r[6], markers), r[3]
+        unit = labels.get(r[7], r[7] or "")
+        same = r[2] == "accepted"
+        out.append({"kind": "pair_accepted" if same else "pair_rejected", "vor": vor, "doc": doc, "confidence": conf,
+                    "code_rule": f"Схожесть названий {fmt_num(round(r[1]))} из 100: ниже порога автосклейки {hi}, зона проверки ИИ {lo}–{hi}",
+                    "ai": (f"Одна и та же работа (уверенность {fmt_conf(conf)}): {r[4] or 'причина не указана'}" if same else
+                           f"Разные работы (уверенность {fmt_conf(conf)}): {r[4] or 'причина не указана'}"),
+                    "code_check": (f"Единица совпала ({unit}), уверенность {fmt_conf(conf)} не ниже порога {fmt_conf(min_conf)}, "
+                                   "конфликтов по диаметру, классу и марке нет" if same else
+                                   "Ответ «разные» принят: пара не склеена, строка осталась без пары")})
+    for r in conn.execute(
+            "SELECT d.decision_id, d.chosen_key, d.confidence, d.reason, d.outcome, ig.work_name_raw AS doc_name, "
+            "(SELECT iv.work_name_raw FROM staging_match_groups gv JOIN items iv ON iv.item_id = gv.first_item_id "
+            " WHERE gv.project_id = d.project_id AND gv.doc_type = 'vor' AND gv.final_work_key = d.chosen_key LIMIT 1) AS vor_name, "
+            "(SELECT COUNT(*) FROM staging_match_candidates c WHERE c.group_id = d.group_id) AS n_cand, g.unit_norm "
+            "FROM staging_llm_row_decisions d JOIN staging_match_groups g ON g.group_id = d.group_id "
+            "JOIN items ig ON ig.item_id = g.first_item_id WHERE d.project_id = ? AND d.outcome IN ('accepted', 'none') "
+            "ORDER BY d.decision_id", (project_id,)):
+        if r[4] == "none" and r[2] < min_conf:
+            continue
+        doc, conf = _clean(r[5], markers), r[2]
+        unit = labels.get(r[8], r[8] or "")
+        rule = (f"Поиск по схожести названий ничего похожего не нашёл (ниже {lo} из 100)" if not r[7] else
+                f"Нашлись только слабые кандидаты (схожесть ниже {hi} из 100): автоматически не решено")
+        if r[4] == "accepted":
+            vor = _clean(r[6], markers)
+            out.append({"kind": "row_accepted", "vor": vor, "doc": doc, "confidence": conf, "code_rule": rule,
+                        "ai": f"ИИ выбрал позицию ВОР из полного списка (уверенность {fmt_conf(conf)}): {r[3] or 'причина не указана'}",
+                        "code_check": f"Позиция есть в списке ВОР, единица совпала ({unit}), числовых конфликтов нет, "
+                                      "позицию не занимает другая строка акта"})
+        else:
+            out.append({"kind": "row_none", "vor": None, "doc": doc, "confidence": conf, "code_rule": rule,
+                        "ai": f"В ВОР такой позиции нет (уверенность {fmt_conf(conf)}): {r[3] or 'причина не указана'}",
+                        "code_check": f"Ответ принят: уверенность не ниже порога {fmt_conf(min_conf)}; расхождение подписано "
+                                      f"«{AI_NOT_FOUND_NOTE}», решает специалист"})
+    return out
+
+
+def pick_examples(examples: list, n: int = 6) -> list:
+    """Отбор для экрана: по порядку видов (2 склейки, 1 отказ, 2 выбора по списку, 1 «нет в ВОР»), без повторов названия в документе."""
+    plan = [("pair_accepted", 2), ("pair_rejected", 1), ("row_accepted", 2), ("row_none", 1)]
+    chosen, seen = [], set()
+    for kind, want in plan:
+        got = 0
+        for e in examples:
+            if e["kind"] == kind and e["doc"].lower() not in seen and got < want:
+                chosen.append(e)
+                seen.add(e["doc"].lower())
+                got += 1
+    for e in examples:                                  # не хватило какого-то вида: добираем любыми
+        if len(chosen) >= n:
+            break
+        if e not in chosen and e["doc"].lower() not in seen:
+            chosen.append(e)
+            seen.add(e["doc"].lower())
+    return chosen[:n]
+
+
+def quality_metrics(issues: pd.DataFrame) -> dict:
+    """Число расхождений, ложные расхождения, найдено из эталона и точность: считает scripts/evaluate.py по data/ground_truth.csv
+    (эталон синтетического генератора). Точность: доля показанных расхождений, которые есть в эталоне."""
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import evaluate as ev
+    gt = ev.read_csv(ROOT / "data" / "ground_truth.csv")
+    traps = ev.read_csv(ROOT / "data" / "traps.csv")
+    result = ev.evaluate_issues(issues.to_dict("records"), gt, traps)
+    return {"issues": result["issues"], "false": result["false_count"], "found": result["found"], "gt_total": result["gt_total"],
+            "precision": result["precision"]}
+
+
+def quality_compare(rules_issues: pd.DataFrame, llm_issues: pd.DataFrame) -> list:
+    """Строки блока «Без ИИ и с ИИ»: [(показатель, без ИИ, с ИИ)] готовыми строками."""
+    a, b = quality_metrics(rules_issues), quality_metrics(llm_issues)
+    pct = lambda q: EMPTY if q["precision"] is None else fmt_pct(q["precision"] * 100, signed=False)  # noqa: E731
+    return [("Возможных расхождений", fmt_num(a["issues"]), fmt_num(b["issues"])),
+            ("Из них ложных", fmt_num(a["false"]), fmt_num(b["false"])),
+            ("Найдено заложенных", f"{a['found']} из {a['gt_total']}", f"{b['found']} из {b['gt_total']}"),
+            ("Точность", pct(a), pct(b))]
+
+
 # ---------- сводные числа ----------
 def impact_split(issues: pd.DataFrame) -> dict:
     """Сумма влияния на бюджет по высокой и низкой уверенности (пустое влияние считается нулём) и число расхождений низкой уверенности."""
@@ -152,16 +300,17 @@ def impact_split(issues: pd.DataFrame) -> dict:
     return {"high": float(amount[~low].sum()), "low": float(amount[low].sum()), "n_low": int(low.sum())}
 
 
-def headline_metrics(summary: dict, issues: pd.DataFrame) -> dict:
-    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, расхождений высокой важности (проверить в первую очередь).
+def headline_metrics(summary: dict, issues: pd.DataFrame, positions: pd.DataFrame) -> dict:
+    """Четыре карточки: позиций проверено, расхождений, влияние на бюджет, позиции для проверки (красные и жёлтые из position_status).
 
     Влияние: в режиме llm общая сумма из summary; в режиме без ИИ крупно только высокая уверенность, остальное отдельно (мелко)."""
     split = impact_split(issues)
     llm = summary["mode"] == "llm"
+    review = int(positions["status"].isin(["red", "yellow"]).sum()) if not positions.empty else 0
     return {"positions": summary["n"], "issues": summary["z"],
             "impact": summary["impact_som"] if llm else split["high"],
             "impact_extra_n": 0 if llm else split["n_low"], "impact_extra": 0.0 if llm else split["low"],
-            "manual": int((issues["severity"] == "high").sum()) if not issues.empty else 0}
+            "review_positions": review}
 
 
 def traffic_segments(summary: dict) -> list:
@@ -273,7 +422,8 @@ def build_cards(issues: pd.DataFrame, positions: pd.DataFrame) -> list:
         cards.append({"issue_id": int(r["issue_id"]), "title": titles[idx], "type": r["issue_type"], "type_label": TYPE_RU[r["issue_type"]],
                       "severity": r["severity"], "severity_label": SEVERITY_RU[r["severity"]], "phrase": issue_phrase(r),
                       "impact_text": impact, "impact_value": None if pd.isna(r["impact_som"]) else float(r["impact_som"]),
-                      "sources": list(r["sources"]), "ai": bool(r["ai_matched"]), "note": note})
+                      "sources": list(r["sources"]), "ai": bool(r["ai_matched"]), "note": note,
+                      "ai_pairs": list(r["ai_pairs"]), "ai_none": r["ai_none"]})
     return cards
 
 

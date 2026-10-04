@@ -12,7 +12,7 @@ import streamlit as st  # noqa: E402
 from src.pipeline import run_pipeline  # noqa: E402
 from ui import components as ui  # noqa: E402
 from ui.data import (TYPE_RU, TYPE_ORDER, build_cards, cards_frame, chart_frames, fmt_num, filter_issues, headline_metrics,  # noqa: E402
-                     load_results, positions_view, sort_issues, traffic_legend, traffic_segments)
+                     load_results, positions_view, quality_compare, sort_issues, traffic_legend, traffic_segments)
 from ui.styles import inject  # noqa: E402
 
 ROOT = Path(__file__).parent
@@ -21,6 +21,8 @@ DB_DIR = Path(tempfile.gettempdir()) / "hackathon_ai_demo"
 MODES = {"С ИИ": "llm", "Без ИИ": "rules_only"}
 SEVERITY_CHOICES = {"Все": "all", "Высокая": "high", "Средняя": "medium", "Низкая": "low"}
 STATUS_CHOICES = {"Все": "all", "Красные": "red", "Жёлтые": "yellow", "Зелёные": "green"}
+AI_LINE = "ИИ читает и сопоставляет названия, код считает и проверяет числа"
+QUALITY_NOTE = "Синтетические данные, оценка ориентировочная."
 WITHOUT_AI_BANNER = "ИИ выключен: похожие названия не склеиваются, ложных расхождений больше"
 log = logging.getLogger("app")
 
@@ -51,6 +53,7 @@ inject()
 # 1. шапка (режим ниже: его знаем только после выбора переключателя)
 ui.render(ui.header_html("Сверка строительных документов", "ВОР · смета · договор · акты в одной таблице",
                          "Демо на синтетических данных"))
+ui.render(ui.ai_line_html(AI_LINE))
 # 2. переключатель «С ИИ / Без ИИ»
 mode_label = segmented("Режим", list(MODES), "С ИИ", "mode")
 mode = MODES[mode_label]
@@ -76,12 +79,12 @@ elif actual == "rules_only":
     ui.render(ui.banner_html(WITHOUT_AI_BANNER))
 
 # 3. карточки-метрики
-m = headline_metrics(summary, issues)
+m = headline_metrics(summary, issues, positions)
 cards = [{"label": "Позиций проверено", "value": fmt_num(m["positions"])},
          {"label": "Возможных расхождений", "value": fmt_num(m["issues"])},
          {"label": "Возможное влияние на бюджет, сом", "value": fmt_num(m["impact"]),
           "note": "Оценка размера возможных расхождений, не вывод о потерях"},
-         {"label": "Нужно проверить вручную", "value": fmt_num(m["manual"]), "note": "расхождений высокой важности"}]
+         {"label": "Позиции для проверки", "value": fmt_num(m["review_positions"]), "note": "красные и жёлтые позиции"}]
 ui.render(ui.metric_cards_html(cards))
 if m["impact_extra_n"]:
     ui.render(f'<div class="note-small">В сумму не входят ещё {m["impact_extra_n"]} расхождений низкой уверенности '
@@ -91,6 +94,20 @@ if summary["a"] and actual == "rules_only":
 ai = summary["ai"]
 if actual == "llm" and ai["pairs_no_decision"] + ai["rows_no_decision"] > 0:
     ui.render(f'<div class="note-small">ИИ-ответы из кэша демо; для новых названий {ai["rows_no_decision"]} строк требуют проверки.</div>')
+
+# 3а. где работает ИИ: сравнение режимов и разделение работы (из режима llm, то есть из кэша ответов)
+try:
+    with_ai = build_demo("llm")
+    without_ai = build_demo("rules_only")
+except Exception:  # noqa: BLE001
+    with_ai = without_ai = None
+if with_ai and without_ai and with_ai["summary"]["mode"] == "llm":
+    ui.render(ui.section_html("Без ИИ и с ИИ", "Те же документы, два режима"))
+    ui.render(ui.compare_html(quality_compare(without_ai["issues"], with_ai["issues"]), QUALITY_NOTE))
+    if with_ai["ai_examples"]:
+        ui.render(ui.section_html("Как ИИ и код делят работу",
+                                  "ИИ предлагает пару названий, код применяет правила и проверяет единицы и числа"))
+        ui.render(ui.examples_html(with_ai["ai_examples"]))
 
 # 4. светофор
 ui.render(ui.section_html("Светофор по позициям"))
@@ -140,5 +157,4 @@ table = positions_view(positions, status)
 ui.stretch(st.dataframe, ui.style_positions(table), hide_index=True, height=500)
 
 # 8-9. как работает и подвал
-ui.render('<div class="how">ИИ читает и сопоставляет названия, обычный код считает и проверяет числа.</div>')
 ui.render('<div class="app-footer">Прототип. Данные синтетические. Результат требует проверки специалистом.</div>')
