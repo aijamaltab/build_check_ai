@@ -19,6 +19,14 @@ SETS = ["set_2", "set_3"]
 XLSX = ["vor_1", "vor_2", "estimate", "contract", "act_1", "act_2", "act_3", "act_4", "act_5"]
 
 
+def norm(path) -> bytes:
+    """Байты файла; у CSV переводы строк приводятся к LF (git на Windows может подставить CRLF при checkout)."""
+    data = Path(path).read_bytes()
+    return data.replace(b"
+", b"
+") if str(path).endswith(".csv") else data
+
+
 def cells(path):
     return [[c.value for c in row] for row in load_workbook(path).active.iter_rows()]
 
@@ -33,7 +41,7 @@ def test_base_set_is_generated_exactly_as_before(tmp_path):
     for name in XLSX:
         assert cells(tmp_path / f"{name}.xlsx") == cells(ROOT / "data" / "synthetic" / f"{name}.xlsx")     # содержимое старого набора не изменилось
     for name in ("ground_truth.csv", "traps.csv", "expected_status.csv"):
-        assert (tmp_path / name).read_bytes() == (ROOT / "data" / name).read_bytes()
+        assert norm(tmp_path / name) == norm(ROOT / "data" / name)
 
 
 def test_profile_does_not_leak_into_module_state(tmp_path):
@@ -47,7 +55,7 @@ def test_committed_set_matches_the_generator_byte_for_byte(name, tmp_path):
     profile = PROFILES[name]
     gen.generate(profile["seed"], tmp_path, tmp_path, profile)
     for path in sorted(tmp_path.iterdir()):
-        assert path.read_bytes() == (set_dir(name) / path.name).read_bytes(), path.name
+        assert norm(path) == norm(set_dir(name) / path.name), path.name
 
 
 @pytest.mark.parametrize("name", SETS)
