@@ -1,4 +1,4 @@
-"""Тесты страницы «Скачать отчёт» (ui/screens/report.py) и генератора Excel-файла."""
+"""Тесты вкладки «Отчёт» (ui/screens/report.py) и генератора Excel-файла."""
 import io
 import tempfile
 from pathlib import Path
@@ -25,8 +25,10 @@ def llm_env(monkeypatch, tmp_path):
 def report_app():
     import os
     os.environ.setdefault("LLM_CACHE_ONLY", "1")
+    from ui.loader import build_demo
     from ui.screens import report
-    report.render()
+    data = build_demo("llm")
+    report.render_report(data["issues"], data["positions"])
 
 
 def test_generate_excel_report_structure(llm_env):
@@ -53,14 +55,6 @@ def test_generate_excel_report_structure(llm_env):
 def test_report_page_render_and_download_button(llm_env):
     at = AppTest.from_function(report_app, default_timeout=60).run()
     assert not at.exception
-
-    html = "\n".join(m.value for m in at.markdown)
-    assert "Скачать отчёт о сверке" in html
-    assert "Экспорт данных" in html
-
-    # Проверяем метрики
-    assert "13" in html
-    assert "1 378 030" in html
 
     # Кнопка скачивания
     assert len(at.download_button) >= 1

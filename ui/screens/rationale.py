@@ -4,6 +4,7 @@ import streamlit as st
 from ui import components as ui
 from ui.data import compact_rows, detail_rows, false_issue_ids, fmt_conf, quality_metrics, traffic_segments
 from ui.loader import build_demo
+from ui.screens.files import render_files
 
 QUALITY_NOTE = "Синтетические данные, оценка ориентировочная."
 STEPS = [("Читаем Excel", "Шаблоны ВОР, сметы, договора и актов читаются по заголовкам колонок, единицы приводятся к одному виду."),
@@ -72,4 +73,6 @@ def render() -> None:
                                 f"Такие случаи помечены «ИИ не нашёл пару в ВОР, требует проверки».", warn=True))
     else:
         ui.render(ui.claim_html("В этом прогоне ложных расхождений с ИИ нет, но на других документах они возможны."))
+    with st.expander("Исходные файлы демо", expanded=False):
+        render_files(with_ai)
     ui.render('<div class="app-footer">Прототип. Данные синтетические. Результат требует проверки специалистом.</div>')

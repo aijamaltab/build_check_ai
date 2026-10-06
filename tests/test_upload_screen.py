@@ -1,4 +1,4 @@
-"""Тесты страницы «Загрузить свои файлы» (ui/screens/upload.py) через AppTest."""
+"""Тесты страницы «Проверить свои файлы» (ui/screens/upload.py) через AppTest."""
 import tempfile
 from pathlib import Path
 
@@ -34,7 +34,8 @@ def test_upload_page_initial_render(llm_env):
     html = "\n".join(m.value for m in at.markdown)
     assert "Загрузите свои файлы для сверки" in html
     assert "Ваши данные" in html
-    assert "Для новых названий ИИ-ответов в демо-кэше нет" in html
+    assert "Для новых названий ИИ-ответов в демо-кэше нет" not in html      # цитата убрана, остался один синий блок
+    assert sum("Для новых названий ИИ-ответов в демо-кэше нет" in i.value for i in at.info) == 1
     assert len(at.file_uploader) == 4    # vor, estimate, contract, acts
     assert len(at.button) >= 1
     assert at.button[0].label == "Сверить"
@@ -58,36 +59,27 @@ def test_upload_page_with_synthetic_results(llm_env, tmp_path):
     at = AppTest.from_function(upload_app, default_timeout=60)
     at.session_state["upload_results"] = results
     at.session_state["upload_summary"] = summary
-    at.session_state["upload_dir"] = DEMO_DIR
     at.run()
 
     assert not at.exception
     html = "\n".join(m.value for m in at.markdown)
 
-    # Проверяем, что результаты совпадают со страницей «Программа»
+    # Проверяем, что результаты совпадают со страницей «Демо»
     assert "Результат сверки" in html
-    assert "13" in html                        # 13 расхождений
+    assert "Строк в документах" in html and "Позиций ВОР в светофоре: 48" in html
     assert "1 378 030" in html                 # влияние на бюджет
     assert "Красные: 11 позиций" in html
     assert "Жёлтые: 7 позиций" in html
     assert "Зелёные: 30 позиций" in html
-    assert html.count('class="issue-card"') == 13
-
-    # Переключаем на вид «Таблица»
-    at.session_state["upload_view"] = "Таблица"
-    at.run()
-    assert not at.exception
-    assert 'class="issue-card"' not in "\n".join(m.value for m in at.markdown)
-    tables = [d.value for d in at.dataframe if "Влияние, сом" in d.value.columns]
-    assert len(tables) == 1
-    assert len(tables[0]) == 13
+    assert html.count('class="issue-card"') == 5
+    assert html.count('class="legend"') == 1
+    assert len(at.download_button) == 1
 
 
 def test_upload_page_broken_files_message(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=60)
     at.session_state["upload_summary"] = {"files": 0, "documents_with_errors": ["corrupt.xlsx"]}
     at.session_state["upload_results"] = {"files": None, "issues": None, "positions": None}
-    at.session_state["upload_dir"] = None
     at.run()
 
     assert not at.exception
@@ -118,7 +110,7 @@ def test_upload_real_files_end_to_end(llm_env):
     assert "Красные: 11 позиций" in html
     assert "Жёлтые: 7 позиций" in html
     assert "Зелёные: 30 позиций" in html
-    assert html.count('class="issue-card"') == 13
+    assert html.count('class="issue-card"') == 5
 
 
 def test_upload_broken_file_end_to_end(llm_env):
@@ -138,3 +130,20 @@ def test_upload_broken_file_end_to_end(llm_env):
     assert any("broken_vor.xlsx" in w.value for w in at.warning)
 
 
+def test_upload_rejects_big_files(llm_env):
+    at = AppTest.from_function(upload_app, default_timeout=60).run()
+    at.file_uploader[0].upload("vor.xlsx", b"x" * (5 * 1024 * 1024 + 1))
+    at.file_uploader[3].upload("act_1.xlsx", (DEMO_DIR / "act_1.xlsx").read_bytes())
+    at.button[0].click().run()
+    assert not at.exception
+    assert any("vor.xlsx" in e.value and "больше 5 МБ" in e.value for e in at.error)
+    assert "upload_results" not in at.session_state
+
+
+def test_upload_removes_temp_files(llm_env, tmp_path):
+    at = AppTest.from_function(upload_app, default_timeout=180).run()
+    at.file_uploader[0].upload("vor_1.xlsx", (DEMO_DIR / "vor_1.xlsx").read_bytes())
+    at.file_uploader[3].upload("act_1.xlsx", (DEMO_DIR / "act_1.xlsx").read_bytes())
+    at.button[0].click().run()
+    assert not at.exception
+    assert list(tmp_path.glob("buildcheck_upload_*")) == []

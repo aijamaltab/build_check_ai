@@ -1,4 +1,4 @@
-"""Страница «Скачать отчёт»: экспорт результатов сверки документов в Excel (.xlsx)."""
+"""Отчёт по сверке: Excel-книга (.xlsx) с листами «Расхождения» и «Позиции», кнопка скачивания и предпросмотр."""
 import io
 from pathlib import Path
 
@@ -9,13 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ui import components as ui
-from ui.data import build_cards, cards_frame, fmt_num, headline_metrics, load_results, positions_view, sort_issues, traffic_legend, traffic_segments
-from ui.loader import build_demo
-
-HERO_TITLE = "Скачать отчёт о сверке"
-HERO_LEAD = ("Экспорт результатов анализа строительных документов в формате Excel (.xlsx). "
-             "Файл содержит подробный реестр выявленных расхождений с указанием источников и сводный светофор позиций.")
-AI_NOTE = "Два листа: «Расхождения» и «Позиции» со светофором"
+from ui.data import build_cards, cards_frame, positions_view, sort_issues
 
 
 def generate_excel_report(issues: pd.DataFrame, positions: pd.DataFrame) -> bytes:
@@ -131,72 +125,26 @@ def generate_excel_report(issues: pd.DataFrame, positions: pd.DataFrame) -> byte
     return buf.getvalue()
 
 
-def render() -> None:
-    ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD, "Экспорт данных", AI_NOTE))
+def download_button(issues: pd.DataFrame, positions: pd.DataFrame, key: str = "report") -> None:
+    st.download_button(label="Скачать отчёт в Excel (.xlsx)", data=generate_excel_report(issues, positions), file_name="buildcheck_report.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", icon=":material/download:", key=key)
 
-    # Выбор источника данных
-    if "upload_results" in st.session_state:
-        c_src, _ = st.columns([2, 4])
-        with c_src:
-            source = ui.segmented("Источник данных", ["Демо-проект", "Загруженные файлы"], "Демо-проект", "report_source")
-        if source == "Загруженные файлы":
-            results = st.session_state["upload_results"]
-            summary = st.session_state.get("upload_summary", results.get("summary", {}))
-        else:
-            try:
-                results = build_demo("llm")
-                summary = results["summary"]
-            except Exception:
-                st.error("Не удалось загрузить данные демо-проекта.")
-                return
-    else:
-        try:
-            results = build_demo("llm")
-            summary = results["summary"]
-        except Exception:
-            st.error("Не удалось загрузить данные демо-проекта.")
-            return
 
-    issues, positions = results.get("issues"), results.get("positions")
+def render_report(issues: pd.DataFrame, positions: pd.DataFrame) -> None:
+    """Вкладка «Отчёт»: кнопка скачивания и предпросмотр листов книги."""
     if issues is None or positions is None or positions.empty:
         st.info("Нет данных для формирования отчёта.")
         return
-
-    # Краткие сводные метрики
-    m = headline_metrics(summary, issues, positions)
-    cards = [{"label": "Позиций проверено", "value": fmt_num(m["positions"])},
-             {"label": "Возможных расхождений", "value": fmt_num(m["issues"])},
-             {"label": "Возможное влияние на бюджет, сом", "value": fmt_num(m["impact"]),
-              "note": "Оценка размера возможных расхождений"},
-             {"label": "Позиции с отклонением от плана", "value": fmt_num(m["review_positions"]),
-              "note": "красные и жёлтые позиции"}]
-    ui.render(ui.metric_cards_html(cards))
-
-    # Генерация файла отчёта
-    excel_bytes = generate_excel_report(issues, positions)
-
+    ui.render(ui.section_html("Отчёт в Excel", "Два листа: «Расхождения» с источниками и «Позиции» со светофором."))
     col_btn, _ = st.columns([2, 3])
     with col_btn:
-        st.download_button(
-            label="📥 Скачать отчёт в Excel (.xlsx)",
-            data=excel_bytes,
-            file_name="buildcheck_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-
-    st.write("")
+        download_button(issues, positions)
     ui.render(ui.section_html("Предпросмотр листов отчёта", "Листы Excel-книги, сформированные для выгрузки."))
-
     tab_issues, tab_positions = st.tabs([f"Лист «Расхождения» ({len(issues)})", f"Лист «Позиции» ({len(positions)})"])
     with tab_issues:
-        cards_list = build_cards(sort_issues(issues), positions)
-        ui.stretch(st.dataframe, cards_frame(cards_list), hide_index=True, height=450,
+        ui.stretch(st.dataframe, cards_frame(build_cards(sort_issues(issues), positions)), hide_index=True, height=450,
                    column_config={"Влияние, сом": st.column_config.NumberColumn("Влияние, сом", format="localized"),
                                   "Источник": st.column_config.TextColumn("Источник", width="large"),
                                   "Что не так": st.column_config.TextColumn("Что не так", width="large")})
-
     with tab_positions:
         ui.stretch(st.dataframe, ui.style_positions(positions_view(positions)), hide_index=True, height=450)
-
-    ui.render('<div class="app-footer">Прототип. Данные синтетические. Результат требует проверки специалистом.</div>')

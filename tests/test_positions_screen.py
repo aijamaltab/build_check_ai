@@ -1,4 +1,4 @@
-"""Тесты страницы «Позиции» (ui/screens/positions.py) через AppTest."""
+"""Тесты вкладки «Позиции» (ui/screens/blocks.positions_block) через AppTest."""
 import tempfile
 from pathlib import Path
 
@@ -21,16 +21,18 @@ def llm_env(monkeypatch, tmp_path):
 def positions_app():
     import os
     os.environ.setdefault("LLM_CACHE_ONLY", "1")
-    from ui.screens import positions
-    positions.render()
+    from ui.loader import build_demo
+    from ui.screens import blocks
+    data = build_demo("llm")
+    blocks.positions_block(data["summary"], data["positions"])
 
 
 def test_positions_page_initial_render(llm_env):
     at = AppTest.from_function(positions_app, default_timeout=60).run()
     assert not at.exception
     html = "\n".join(m.value for m in at.markdown)
-    assert "Позиции ведомости и выполнение" in html
-    assert "Светофор позиций" in html
+    assert html.count('class="legend"') == 1             # легенда один раз
+    assert "Позиций ВОР в светофоре: 48" in html
     assert "Светофор по позициям" in html
     assert "Красные: 11 позиций" in html
     assert "Жёлтые: 7 позиций" in html
@@ -95,3 +97,8 @@ def test_positions_empty_result_message(llm_env):
     assert not at.exception
     assert len(at.info) >= 1
     assert "не найдено" in at.info[0].value
+
+
+def test_positions_review_checkbox_label(llm_env):
+    at = AppTest.from_function(positions_app, default_timeout=60).run()
+    assert at.checkbox[0].label == "Только позиции с отклонением от плана (красные и жёлтые)"
