@@ -30,9 +30,9 @@ def hero_html(title: str, lead: str, pill: str, note: str = "") -> str:
 
 
 def trio_html(items: list) -> str:
-    """Три пункта в ряд (на телефоне друг под другом): [(заголовок, текст)] с номерами."""
-    cells = "".join(f'<div class="trio-item"><div class="trio-num">{i}</div><div class="trio-title">{escape(t)}</div>'
-                    f'<div class="trio-text">{escape(text)}</div></div>' for i, (t, text) in enumerate(items, 1))
+    """Три пункта в ряд (на телефоне друг под другом): [(заголовок, текст)], без нумерации."""
+    cells = "".join(f'<div class="trio-item"><div class="trio-title">{escape(t)}</div>'
+                    f'<div class="trio-text">{escape(text)}</div></div>' for t, text in items)
     return f'<div class="trio">{cells}</div>'
 
 
@@ -144,6 +144,18 @@ def issue_card_html(c: dict) -> str:
             f'<div class="issue-src">{sources}</div></div></div>')
 
 
+def issue_rows_html(cards: list) -> str:
+    """Компактные строки расхождений (без карточек): точка важности, название, тип и фраза, сумма справа."""
+    rows = ""
+    for c in cards:
+        amount = escape(c["impact_text"]) if c["impact_value"] is not None else "—"
+        rows += (f'<div class="irow"><span class="sev" style="background:{SEVERITY_COLOR[c["severity"]]}" title="важность: {escape(c["severity_label"])}"></span>'
+                 f'<div class="irow-main"><div class="irow-title">{escape(c["title"])}</div>'
+                 f'<div class="irow-sub">{escape(c["type_label"])} · важность: {escape(c["severity_label"])} · {escape(c["phrase"])}</div></div>'
+                 f'<div class="irow-amt">{amount}</div></div>')
+    return f'<div class="irows">{rows}</div>'
+
+
 def cards_html(cards: list) -> str:
     return "".join(issue_card_html(c) for c in cards)
 
@@ -207,3 +219,8 @@ def segmented(label: str, options: list, default: str, key: str) -> str:
         picked = st.segmented_control(label, options, default=default, key=key, label_visibility="collapsed")
         return picked or default
     return st.radio(label, options, index=options.index(default), horizontal=True, key=key, label_visibility="collapsed")
+
+
+def topbar_html(project: str, run_at: str, mode: str) -> str:
+    return (f'<div class="topbar"><span class="topbar-item"><b>Проект:</b> {escape(project)}</span>'
+            f'<span class="topbar-item"><b>Прогон:</b> {escape(run_at)}</span><span class="topbar-item"><b>Режим:</b> {escape(mode)}</span></div>')

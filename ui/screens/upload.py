@@ -16,7 +16,7 @@ HERO_TITLE = "Загрузите свои файлы для сверки"
 HERO_LEAD = "Загрузите ВОР, смету, договор и акты в формате Excel (.xlsx), чтобы система сопоставила их и нашла возможные расхождения."
 
 
-def render(results_page=None) -> None:
+def render() -> None:
     ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD, "Ваши данные"))
 
     st.info("Для новых названий ИИ-ответов в демо-кэше нет, такие строки не сопоставлены, "
@@ -60,7 +60,7 @@ def render(results_page=None) -> None:
             run_reconciliation(chosen)
 
     if "upload_results" in st.session_state:
-        show_result(st.session_state["upload_results"], st.session_state["upload_summary"], results_page)
+        show_result(st.session_state["upload_results"], st.session_state["upload_summary"])
     blocks.footer()
 
 
@@ -93,7 +93,7 @@ def run_reconciliation(files: list) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def show_result(results: dict, summary: dict, results_page=None) -> None:
+def show_result(results: dict, summary: dict) -> None:
     if not summary or summary.get("files", 0) == 0 or results.get("files", None) is None or results["files"].empty:
         st.error("Загруженные файлы не были распознаны. Убедитесь, что они сохранены в формате .xlsx и содержат строки заголовков "
                  "с наименованием, единицей измерения и количеством.")
@@ -107,8 +107,5 @@ def show_result(results: dict, summary: dict, results_page=None) -> None:
     if summary["mode"] != "llm":
         ui.render(ui.banner_html(summary["banner"] or "ИИ-режим недоступен, использован базовый режим"))
     blocks.metrics_block(summary, issues, positions)
-    blocks.traffic_block(summary)
-    blocks.top_issues_block(issues, positions)
     download_button(issues, positions, key="upload_report")
-    if results_page is not None:
-        st.page_link(results_page, label="Все расхождения и позиции →")
+    blocks.ledger_block(results)

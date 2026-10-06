@@ -81,6 +81,7 @@ def load_results(db_path, project_id: str = "demo") -> dict:
             "JOIN staging_match_rows r ON r.group_id = d.group_id JOIN items i ON i.item_id = r.item_id "
             "WHERE d.project_id = ? AND d.outcome = 'none' AND d.confidence >= ?", conn, params=(project_id, min_conf))
         examples = collect_ai_examples(conn, project_id, cfg)
+        run = conn.execute("SELECT started_at FROM runs ORDER BY run_id DESC LIMIT 1").fetchone()
         files = pd.read_sql_query(
             "SELECT d.file_name, d.doc_type, d.status, e.template, e.currency, e.n_rows_read, e.n_unrecognized, e.n_service "
             "FROM documents d JOIN staging_documents_ext e ON e.doc_id = d.doc_id WHERE d.project_id = ? ORDER BY d.doc_id",
@@ -98,7 +99,8 @@ def load_results(db_path, project_id: str = "demo") -> dict:
     markers = cfg["synonyms"].get("strip_markers", [])
     issues = attach_sides(attach_ai(attach_context(issues, items, ai_keys), ai_pair_rows, none_rows, markers), items, markers)
     return {"summary": summary, "issues": issues, "positions": positions, "documents": documents, "ai_examples": pick_examples(examples),
-            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers), "files": files}
+            "ai_pairs_all": ai_pair_list(ai_pair_rows, markers), "files": files, "items": items,
+            "ai_by_key": ai_pairs_by_key(ai_pair_rows, markers), "run_at": run[0] if run else None}
 
 
 # ---------- форматирование ----------
@@ -379,6 +381,26 @@ def pick_examples(examples: list, n: int = 6) -> list:
             chosen.append(e)
             seen.add(e["doc"].lower())
     return chosen[:n]
+
+
+def ai_pairs_by_key(pair_rows: pd.DataFrame, markers) -> dict:
+    """{work_key: [пары названий, которые сопоставил ИИ]} для всех позиций (не только с расхождением)."""
+    out = {}
+    for r in pair_rows.itertuples():
+        pair = {"doc_type": r.doc_type, "doc": _clean(r.doc_name, markers), "vor": _clean(r.vor_name, markers),
+                "confidence": None if pd.isna(r.confidence) else float(r.confidence), "reason": r.reason or ""}
+        pairs = out.setdefault(r.work_key, [])
+        if not any(p["doc"] == pair["doc"] and p["vor"] == pair["vor"] for p in pairs):
+            pairs.append(pair)
+    return out
+
+
+def fmt_run_at(iso) -> str:
+    """«2026-10-06T19:04:39» -> «06.10.2026 19:04»; нет даты -> «—»."""
+    try:
+        return datetime.fromisoformat(str(iso)).strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return EMPTY
 
 
 def ai_pair_list(pair_rows: pd.DataFrame, markers) -> list:

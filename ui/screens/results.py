@@ -1,4 +1,4 @@
-"""Страница «Все результаты»: расхождения, позиции и отчёт по демо-проекту или по загруженным файлам (вкладки)."""
+"""Страница «Сверочная ведомость»: таблица позиций (демо-проект или загруженные файлы) и вкладка «Отчёт»."""
 import streamlit as st
 
 from ui import components as ui
@@ -6,8 +6,8 @@ from ui.loader import build_demo
 from ui.screens import blocks
 from ui.screens.report import render_report
 
-HERO_TITLE = "Все результаты сверки"
-HERO_LEAD = "Полный список расхождений, позиции со светофором и отчёт для скачивания."
+HERO_TITLE = "Сверочная ведомость"
+HERO_LEAD = "Строка — позиция ВОР. Нажмите на подсвеченную ячейку или строку: источники и объяснение."
 
 
 def pick_results():
@@ -28,20 +28,17 @@ def pick_results():
 
 
 def render() -> None:
-    ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD, "Результаты"))
+    ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD, "Только чтение"))
     picked = pick_results()
     if picked is None:
         return
     results, summary = picked
-    issues, positions = results.get("issues"), results.get("positions")
-    if issues is None or positions is None:
+    if results.get("issues") is None or results.get("positions") is None:
         st.info("Данных для показа нет.")
         return
-    tab_issues, tab_positions, tab_report = st.tabs(["Расхождения", "Позиции", "Отчёт"])
-    with tab_issues:
-        blocks.issues_block(issues, positions)
-    with tab_positions:
-        blocks.positions_block(summary, positions)
+    tab_ledger, tab_report = st.tabs(["Ведомость", "Отчёт"])
+    with tab_ledger:
+        blocks.ledger_block(results)
     with tab_report:
-        render_report(issues, positions)
+        render_report(results["issues"], results["positions"])
     blocks.footer()

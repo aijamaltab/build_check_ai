@@ -41,10 +41,10 @@
 ## 3. Где что лежит
 
 ```
-app.py                  точка входа и меню страниц (st.navigation): «Демо», «Проверить свои файлы», «Все результаты», «Как работает ИИ». Айжамал; тебе можно только
+app.py                  точка входа и меню страниц (st.navigation): «Демо», «Проверить свои файлы», «Сверочная ведомость», «Как работает ИИ». Айжамал; тебе можно только
                         добавить свою страницу в список pages (см. правило 4)
 ui/screens/demo.py      страница «Демо» (url_path demo, не трогать)
-ui/screens/results.py   страница «Все результаты» (вкладки; url_path results)
+ui/screens/results.py   страница «Сверочная ведомость» (url_path ledger; таблица: ui/ledger.py, ui/ledger_data.py)
 ui/screens/upload.py    страница «Проверить свои файлы» (url_path upload)
 ui/screens/blocks.py    общие блоки: метрики, светофор, карточки, позиции
 ui/screens/rationale.py страница «Как работает ИИ» (url_path rationale, не трогать)

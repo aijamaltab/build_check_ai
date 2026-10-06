@@ -63,11 +63,16 @@ def test_demo_page_shows_summary_and_top_issues(llm_env):
         assert html.count(text) == 1                                              # метрики один раз
     for label in ("Красные: 11 позиций", "Жёлтые: 7 позиций", "Зелёные: 30 позиций"):
         assert label in html
-    assert html.count('class="issue-card"') == 5 and "Главные расхождения" in html
+    assert html.count('class="irow"') == 3 and 'class="issue-card"' not in html and "Главные расхождения" in html   # топ-3 компактными строками
     assert html.count('class="legend"') == 1                                      # легенда один раз
     assert "Исходные файлы" not in html and len(at.dataframe) == 0                # просмотрщик файлов убран с главной
     assert "Прототип. Данные синтетические. Результат требует проверки специалистом." in html
     assert "Без ИИ и с ИИ" not in html
+
+
+def test_topbar_shows_project_run_date_and_mode(llm_env):
+    html = page(run_app())
+    assert "Проект:" in html and "Капремонт школы" in html and "Прогон:" in html and "Режим:" in html and "С ИИ (из кэша)" in html
 
 
 def test_demo_metric_labels_rows_and_traffic_positions_honestly(llm_env):
@@ -76,49 +81,16 @@ def test_demo_metric_labels_rows_and_traffic_positions_honestly(llm_env):
     assert "Позиций ВОР в светофоре: 48" in html and "Позиций проверено" not in html
 
 
-# ---------- страница «Все результаты» ----------
-def test_results_page_has_three_tabs_and_no_metrics(llm_env):
+# ---------- страница «Сверочная ведомость» ----------
+def test_ledger_page_has_table_component_and_report_tab(llm_env):
     at = results_run()
     assert not at.exception
-    assert [t.label for t in at.tabs][:3] == ["Расхождения", "Позиции", "Отчёт"]
+    assert [t.label for t in at.tabs][:2] == ["Ведомость", "Отчёт"]
     html = body(at)
-    assert "Возможное влияние на бюджет, сом" not in html and "Строк в документах" not in html
-    assert html.count('class="issue-card"') == 13 and html.count('class="sides"') == 13
-    assert html.count('class="legend"') == 1
+    assert "Сверочная ведомость" in html
+    assert "Возможное влияние на бюджет, сом" not in html and "Строк в документах" not in html     # метрики здесь не повторяются
+    assert 'class="issue-card"' not in html and len(at.get("iframe")) == 1                           # таблица это компонент
     assert len(at.download_button) == 1
-
-
-def test_cards_show_vor_and_act_side_by_side_as_written(llm_env):
-    html = body(results_run())
-    assert "В ВОР" in html and "В актах" in html and "В смете" in html and "Договор" in html
-    assert "«Арматура А500 d12»" in html and "«Арм. А500 Ø12»" in html                # как написано в ВОР и в акте
-    assert "Всего 11,4 т" in html and "9,5 т" in html
-    assert "Названия записаны по-разному в разных документах" in html
-    assert "такой позиции не найдено" in html and "срок выполнения работ" in html.lower()
-    assert "Что сделал ИИ" in html and "ИИ помог сопоставить" in html and "ИИ просмотрел весь список ВОР и не нашёл пару" in html
-
-
-def test_table_view_uses_dataframe_instead_of_cards(llm_env):
-    at = AppTest.from_function(results_app, default_timeout=180)
-    at.session_state["view"] = "Таблица"
-    at.run()
-    assert not at.exception
-    assert 'class="issue-card"' not in body(at)
-    table = next(d.value for d in at.dataframe if "Влияние, сом" in d.value.columns)
-    assert len(table) == 13 and {"Важность", "Тип", "Работа", "Что не так", "Влияние, сом", "Источник"} <= set(table.columns)
-
-
-def test_filters_narrow_the_list(llm_env):
-    at = AppTest.from_function(results_app, default_timeout=180)
-    at.session_state["severity"] = "Низкая"
-    at.run()
-    assert not at.exception and 'class="issue-card"' not in body(at)
-    assert any("По выбранным фильтрам расхождений нет." in i.value for i in at.info)
-
-
-def test_results_positions_tab_has_all_positions(llm_env):
-    at = results_run()
-    assert any(len(d.value) == 48 and "Статус" in d.value.columns for d in at.dataframe)
 
 
 # ---------- страница «Как работает ИИ» ----------
@@ -155,7 +127,8 @@ def test_rationale_page_has_collapsed_source_files_viewer(llm_env):
 
 def test_app_registers_four_pages_in_new_order():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    titles = ["Демо", "Проверить свои файлы", "Все результаты", "Как работает ИИ"]
+    titles = ["Демо", "Проверить свои файлы", "Сверочная ведомость", "Как работает ИИ"]
     positions = [source.index(f'title="{t}"') for t in titles]
     assert positions == sorted(positions)
-    assert all(f'url_path="{p}"' in source for p in ("demo", "upload", "results", "rationale"))
+    assert all(f'url_path="{p}"' in source for p in ("demo", "upload", "ledger", "rationale"))
+    assert 'position="sidebar"' in source                                    # навигация слева

@@ -29,5 +29,5 @@ def render(upload_page=None, results_page=None) -> None:
     if upload_page is not None:
         st.page_link(upload_page, label="Проверить свои файлы", icon=":material/upload_file:")
     if results_page is not None:
-        st.page_link(results_page, label="Все расхождения и позиции →")
+        st.page_link(results_page, label="Открыть сверочную ведомость →")
     blocks.footer()

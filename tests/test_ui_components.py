@@ -106,7 +106,7 @@ def test_showcase_components():
     hero = c.hero_html("Заголовок <b>", "Лид", "Демо", "Заметка")
     assert "hero-title" in hero and "Заголовок &lt;b&gt;" in hero and "Заметка" in hero and "Демо" in hero
     trio = c.trio_html([("А", "а"), ("Б", "б"), ("В", "в")])
-    assert trio.count("trio-item") == 3 and ">3<" in trio
+    assert trio.count("trio-item") == 3 and "trio-num" not in trio
     assert 'claim-warn' in c.claim_html("x", warn=True) and 'claim-warn' not in c.claim_html("x")
 
 

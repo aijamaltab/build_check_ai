@@ -64,16 +64,11 @@ def test_upload_page_with_synthetic_results(llm_env, tmp_path):
     assert not at.exception
     html = "\n".join(m.value for m in at.markdown)
 
-    # Проверяем, что результаты совпадают со страницей «Демо»
+    # результат на этой же странице: метрики, кнопка отчёта и та же сверочная ведомость (компонент)
     assert "Результат сверки" in html
-    assert "Строк в документах" in html and "Позиций ВОР в светофоре: 48" in html
-    assert "1 378 030" in html                 # влияние на бюджет
-    assert "Красные: 11 позиций" in html
-    assert "Жёлтые: 7 позиций" in html
-    assert "Зелёные: 30 позиций" in html
-    assert html.count('class="issue-card"') == 5
-    assert html.count('class="legend"') == 1
-    assert len(at.download_button) == 1
+    assert "Строк в документах" in html and "1 378 030" in html
+    assert len(at.get("iframe")) == 1 and len(at.download_button) == 1
+    assert 'class="issue-card"' not in html
 
 
 def test_upload_page_broken_files_message(llm_env):
@@ -104,13 +99,7 @@ def test_upload_real_files_end_to_end(llm_env):
     assert not at.exception
 
     html = "\n".join(m.value for m in at.markdown)
-    assert "Результат сверки" in html
-    assert "13" in html
-    assert "1 378 030" in html
-    assert "Красные: 11 позиций" in html
-    assert "Жёлтые: 7 позиций" in html
-    assert "Зелёные: 30 позиций" in html
-    assert html.count('class="issue-card"') == 5
+    assert "Результат сверки" in html and "1 378 030" in html and len(at.get("iframe")) == 1
 
 
 def test_upload_broken_file_end_to_end(llm_env):
