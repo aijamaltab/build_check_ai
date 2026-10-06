@@ -3,3 +3,4 @@ openpyxl
 rapidfuzz
 streamlit
 pyyaml
+google-genai==2.28.0
