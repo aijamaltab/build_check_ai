@@ -6,9 +6,19 @@ import json
 
 from ui.data import STATUS_COLORS
 
-COLUMN_TITLES = ["№", "Статус", "Наименование (по ВОР)", "Ед.", "ВОР, кол-во", "Акты, кол-во", "Выполнено, %", "Цена по смете", "Цена по акту (средняя)", "Δ цены, %"]
-HINTS = {"actp": "Средневзвешенная по количеству, если актов несколько"}
+LEDGER_COLUMNS = [
+    {"k": "n", "title": "№"}, {"k": "status", "title": "Статус"}, {"k": "name", "title": "Наименование (по ВОР)"}, {"k": "unit", "title": "Ед."},
+    {"k": "plan", "title": "ВОР, кол-во", "num": True}, {"k": "fact", "title": "Акты, кол-во", "num": True},
+    {"k": "pct", "title": "Выполнено, %", "num": True}, {"k": "est", "title": "Цена по смете", "num": True},
+    {"k": "actp", "title": "Цена по акту (средняя)", "num": True, "hint": "Средневзвешенная по количеству, если актов несколько"},
+    {"k": "dp", "title": "Δ цены, %", "num": True}]
+# режим «только расхождения»: одна строка = одно расхождение; закреплённых колонок нет
+ISSUE_COLUMNS = [
+    {"k": "n", "title": "№"}, {"k": "type", "title": "Тип"}, {"k": "name", "title": "Работа"}, {"k": "text", "title": "Что не сходится"},
+    {"k": "impact", "title": "Влияние, сом", "num": True}, {"k": "where", "title": "Где смотреть"}]
+COLUMN_TITLES = [c["title"] for c in LEDGER_COLUMNS]
 HEIGHT = 900
+ISSUES_HEIGHT_BASE, ISSUES_HEIGHT_ROW = 330, 78      # запасной расчёт высоты; точная подгоняется скриптом по содержимому
 
 TEMPLATE = r"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,6 +28,7 @@ TEMPLATE = r"""<!doctype html>
 * { box-sizing: border-box; }
 html, body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 'IBM Plex Sans','Segoe UI',Arial,sans-serif; font-variant-numeric: tabular-nums; }
 body { padding: 2px 1px 12px 1px; }
+.mode-issues .toolbar, .mode-issues #details, .mode-issues #docissues { display:none; }
 .panel { background:#fff; border:1px solid var(--line); border-radius:6px; }
 .toolbar { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; padding:10px 12px; margin-bottom:8px; }
 .toolbar input[type=search], .toolbar select { height:32px; border:1px solid var(--line); border-radius:4px; padding:0 10px; font:inherit; background:#fff; color:var(--ink); min-width:0; }
@@ -34,6 +45,15 @@ th { position:sticky; top:0; z-index:2; background:#EEF2F6; font-weight:600; tex
 td { height:34px; padding:0 8px; border-bottom:1px solid #E8ECF1; white-space:nowrap; background:#fff; }
 th.num, td.num { text-align:right; }
 td.c-name, th.c-name { white-space:normal; line-height:1.2; overflow-wrap:anywhere; }
+.mode-issues .wrap { max-height:none; overflow:visible; }
+.mode-issues table { min-width:0; }
+.mode-issues th, .mode-issues td { white-space:normal; height:auto; padding:8px; vertical-align:top; overflow-wrap:anywhere; line-height:1.35; }
+.mode-issues th { height:36px; vertical-align:middle; }
+.mode-issues td.num { white-space:nowrap; }
+.mode-issues .i-n { width:36px; } .mode-issues .i-type { width:150px; } .mode-issues .i-name { width:210px; } .mode-issues .i-impact { width:110px; }
+.mode-issues .i-where { width:260px; color:var(--muted); font-size:12px; }
+.sub { color:var(--muted); font-size:12px; }
+.aib { display:inline-block; margin-left:6px; padding:0 6px; border-radius:4px; background:var(--accent-soft); color:var(--accent); border:1px solid #C9D8E6; font-size:11px; font-weight:600; vertical-align:middle; }
 .c-n, .c-status, .c-name { position:sticky; background:#fff; }
 th.c-n, th.c-status, th.c-name { background:#EEF2F6; z-index:4; }
 td.c-n, td.c-status, td.c-name { z-index:1; }
@@ -69,7 +89,14 @@ td[data-tip] { cursor:help; }
 .empty { color:var(--muted); }
 .docs { margin-top:8px; padding:10px 14px; }
 .docs .row { padding:3px 0; overflow-wrap:anywhere; }
-@media (max-width: 640px) { .c-n { width:32px; min-width:32px; max-width:32px; } .c-status { left:32px; width:100px; min-width:100px; max-width:100px; } .c-name { left:132px; width:120px; min-width:120px; max-width:120px; font-size:12px; } .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
+@media (max-width: 640px) {
+  .mode-issues table, .mode-issues tbody, .mode-issues tr, .mode-issues td { display:block; width:100%; }
+  .mode-issues thead { display:none; }
+  .mode-issues tr { border-bottom:1px solid var(--line); padding:6px 0; }
+  .mode-issues td { border:0; padding:3px 10px; text-align:left; }
+  .mode-issues td::before { content:attr(data-label); display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .mode-issues td.i-n, .mode-issues td.i-type, .mode-issues td.i-name, .mode-issues td.i-impact, .mode-issues td.i-where { width:100%; }
+ .c-n { width:32px; min-width:32px; max-width:32px; } .c-status { left:32px; width:100px; min-width:100px; max-width:100px; } .c-name { left:132px; width:120px; min-width:120px; max-width:120px; font-size:12px; } .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
 </style></head><body>
 <div class="panel toolbar" role="search">
   <input id="q" type="search" placeholder="Поиск по названию" aria-label="Поиск по названию">
@@ -89,15 +116,16 @@ td[data-tip] { cursor:help; }
 <script>
 (function () {
   var D = JSON.parse(document.getElementById('ledger-data').textContent);
-  var P = D.palette, T = D.titles;
-  var KEYS = ['n','status','name','unit','plan','fact','pct','est','actp','dp'];
-  var NUM = {plan:1,fact:1,pct:1,est:1,actp:1,dp:1};
+  var P = D.palette, C = D.columns, PRE = D.mode === 'issues' ? 'i-' : 'c-';
+  var KEYS = C.map(function (c) { return c.k; });
+  var NUM = {}; C.forEach(function (c) { if (c.num) NUM[c.k] = 1; });
+  document.body.className = 'mode-' + D.mode;
   var CHIPS = [['red','Красные'],['yellow','Жёлтые'],['green','Зелёные']];
   var S = {q:'', stat:{}, dev:false, iss:false, unit:'', sel:null, pin:null};
   var $ = function (id) { return document.getElementById(id); };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-  $('head').innerHTML = KEYS.map(function (k, i) { return '<th class="c-' + k + ' ' + (NUM[k] ? 'num' : '') + '">' + esc(T[i]) + (D.hints[k] ? ' <span class="hint" tabindex="0" role="button" aria-label="' + esc(D.hints[k]) + '" data-hint="' + k + '">ⓘ</span>' : '') + '</th>'; }).join('');
+  $('head').innerHTML = KEYS.map(function (k, i) { return '<th class="' + PRE + k + ' ' + (NUM[k] ? 'num' : '') + '">' + esc(C[i].title) + (D.hints[k] ? ' <span class="hint" tabindex="0" role="button" aria-label="' + esc(D.hints[k]) + '" data-hint="' + k + '">ⓘ</span>' : '') + '</th>'; }).join('');
   $('chips').innerHTML = CHIPS.map(function (c) {
     return '<button type="button" class="chip" data-s="' + c[0] + '" aria-pressed="false"><span class="dot" style="background:' + P[c[0]] + '"></span>' + c[1] + '</button>';
   }).join('');
@@ -120,17 +148,23 @@ td[data-tip] { cursor:help; }
   }
   function cell(r, k) {
     var hl = r.hl[k], tip = r.tips[k];
-    var cls = 'c-' + k + ' ' + (NUM[k] ? 'num ' : '') + (hl ? 'hl-' + hl : '');
-    var attr = tip ? ' data-tip="' + k + '" tabindex="0"' : '';
-    var body = k === 'status' ? status(r) : esc(r[k]);
+    var cls = PRE + k + ' ' + (NUM[k] ? 'num ' : '') + (hl ? 'hl-' + hl : '');
+    var attr = (tip ? ' data-tip="' + k + '" tabindex="0"' : '') + ' data-label="' + esc(C[KEYS.indexOf(k)].title) + '"';
+    var body = k === 'status' ? status(r) : k === 'where' ? (r.where || []).map(esc).join('<br>') : esc(r[k]);
+    if (r[k + '_sub']) body += '<div class="sub">' + esc(r[k + '_sub']) + '</div>';
+    if (k === 'name' && r.ai_badge) body += '<span class="aib" title="Пару названий сопоставил ИИ">ИИ</span>';
     return '<td class="' + cls + '"' + attr + '>' + body + '</td>';
   }
   function render() {
     var rows = visible();
     $('body').innerHTML = rows.length ? rows.map(function (r) {
       return '<tr data-n="' + r.n + '" tabindex="0" class="' + (S.sel === r.n ? 'sel' : '') + '">' + KEYS.map(function (k) { return cell(r, k); }).join('') + '</tr>';
-    }).join('') : '<tr><td colspan="10" class="muted" style="padding:14px">По выбранным фильтрам позиций нет.</td></tr>';
+    }).join('') : '<tr><td colspan="' + KEYS.length + '" class="muted" style="padding:14px">По выбранным фильтрам позиций нет.</td></tr>';
     $('count').textContent = 'Показано ' + rows.length + ' из ' + D.total + ' позиций';
+    fit();
+  }
+  function fit() {
+    try { if (D.fit && window.frameElement) window.frameElement.style.height = (document.body.offsetHeight + 12) + 'px'; } catch (e) {}
   }
   function byN(n) { return D.rows.filter(function (r) { return r.n === n; })[0]; }
 
@@ -176,8 +210,9 @@ td[data-tip] { cursor:help; }
     $('details').innerHTML = h;
   }
   function select(n, scroll) {
-    S.sel = n; render(); details(byN(n));
-    if (scroll) $('details').scrollIntoView({block: 'nearest', behavior: 'smooth'});
+    S.sel = n; render();
+    if (D.mode !== 'issues') { details(byN(n)); fit(); }
+    if (scroll && D.mode !== 'issues') $('details').scrollIntoView({block: 'nearest', behavior: 'smooth'});
   }
 
   function showHint(el) {
@@ -224,13 +259,27 @@ td[data-tip] { cursor:help; }
 </script></body></html>"""
 
 
-def ledger_html(ledger: dict) -> str:
-    """Готовая страница таблицы. Данные в JSON; «</» экранируется, чтобы текст из файлов не закрыл тег script."""
-    payload = {**ledger, "palette": {k: v[0] for k, v in STATUS_COLORS.items()}, "titles": COLUMN_TITLES, "hints": HINTS}
+def ledger_html(ledger: dict, mode: str = "ledger") -> str:
+    """Готовая страница таблицы. mode: "ledger" (позиции) или "issues" (только расхождения, строки из build_issue_rows).
+    Данные в JSON; «</» экранируется, чтобы текст из файлов не закрыл тег script."""
+    columns = ISSUE_COLUMNS if mode == "issues" else LEDGER_COLUMNS
+    hints = {c["k"]: c["hint"] for c in columns if c.get("hint")}
+    payload = {**ledger, "palette": {k: v[0] for k, v in STATUS_COLORS.items()}, "columns": columns, "hints": hints, "mode": mode}
+    payload["fit"] = not hasattr(__import__("streamlit"), "iframe")      # st.iframe сам подгоняет высоту, иначе подгоняет скрипт
+    payload.setdefault("units", [])
+    payload.setdefault("doc_issues", [])
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
     return TEMPLATE.replace("__DATA__", data)
 
 
-def render_ledger(ledger: dict, height: int = HEIGHT) -> None:
+def render_ledger(ledger: dict, height: int = HEIGHT, mode: str = "ledger") -> None:
+    """Таблица в iframe. Скрипт сам подгоняет высоту iframe под содержимое; height это запасное значение до его запуска."""
+    import streamlit as st
+    html = ledger_html(ledger, mode)
+    if hasattr(st, "iframe"):                       # новый API: высота по содержимому (st.components.v1.html объявлен устаревшим)
+        st.iframe(html, height="content")
+        return
     import streamlit.components.v1 as components
-    components.html(ledger_html(ledger), height=height, scrolling=True)
+    if mode == "issues":
+        height = ISSUES_HEIGHT_BASE + ISSUES_HEIGHT_ROW * ledger["total"]
+    components.html(html, height=height, scrolling=True)

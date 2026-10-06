@@ -8,7 +8,7 @@ from src.pipeline import run_pipeline
 from tests.cache_guard import REAL_CACHE
 from ui.data import STATUS_COLORS, contrast_ratio, fmt_run_at, load_results
 from ui.ledger import COLUMN_TITLES, ledger_html
-from ui.ledger_data import build_ledger
+from ui.ledger_data import build_issue_rows, build_ledger, summary_points
 
 DEMO_DIR = Path(__file__).resolve().parents[1] / "data" / "synthetic"
 
@@ -118,7 +118,7 @@ def test_column_order_pinned_columns_and_price_hint(ledger):
     assert COLUMN_TITLES[:3] == ["№", "Статус", "Наименование (по ВОР)"] and "Цена по акту (средняя)" in COLUMN_TITLES
     assert "Цена по акту" not in [t for t in COLUMN_TITLES if t != "Цена по акту (средняя)"]
     html = ledger_html(ledger)
-    assert "var KEYS = ['n','status','name'" in html
+    assert '"k": "n"' in html and html.index('"k": "status"') < html.index('"k": "name"')
     assert "Средневзвешенная по количеству, если актов несколько" in html
     for col in (".c-n", ".c-status", ".c-name"):                          # колонки закреплены слева
         assert col in html
@@ -128,3 +128,74 @@ def test_column_order_pinned_columns_and_price_hint(ledger):
 def test_sidebar_is_collapsed_by_default():
     from pathlib import Path as P
     assert 'initial_sidebar_state="collapsed"' in (P(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+
+
+def test_price_delta_is_dash_unless_there_is_a_price_issue(ledger):
+    assert row(ledger, "Кладка кирпичных стен")["dp"] == "+11,3%"
+    assert row(ledger, "Разработка грунта экскаватором")["dp"] == "—"
+    assert all(r["dp"] == "—" for r in ledger["rows"] if "est" not in r["hl"])
+    assert not any(r["dp"] in ("0,0%", "+0,0%", "−0,0%") for r in ledger["rows"])
+
+
+@pytest.fixture(scope="module")
+def both(tmp_path_factory):
+    import os
+    old = {k: os.environ.get(k) for k in ("LLM_CACHE_DIR", "LLM_CACHE_ONLY", "GEMINI_API_KEY")}
+    os.environ.update(LLM_CACHE_DIR=str(REAL_CACHE), LLM_CACHE_ONLY="1")
+    os.environ.pop("GEMINI_API_KEY", None)
+    try:
+        d = tmp_path_factory.mktemp("both")
+        run_pipeline(DEMO_DIR, d / "a.db", mode="llm")
+        run_pipeline(DEMO_DIR, d / "b.db", mode="rules_only")
+        return load_results(d / "a.db"), load_results(d / "b.db")
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+def test_issue_rows_only_discrepancies_sorted_with_readable_phrase(both):
+    rows = build_issue_rows(both[0])["rows"]
+    assert len(rows) == 13 and [r["n"] for r in rows] == list(range(1, 14))
+    assert [r["impact"] for r in rows[:3]] == ["240 000", "210 000", "195 000"]
+    beton = next(r for r in rows if "Бетон М300" in r["name"])
+    assert beton["text"] == "В актах 98 м3, в ВОР 85 м3, на 15,3 % больше при допуске 5 %" and beton["type"] == "Превышение объёма"
+    assert "ВОР · vor_1.xlsx · лист «ВОР» · строка 19" in beton["where"] and beton["ai_badge"] is True      # где смотреть и значок ИИ
+    assert not next(r for r in rows if "Арматура А500" in r["name"])["ai_badge"]
+    tip = beton["tips"]["text"]
+    assert tip["impact"] == "101 400 сом" and tip["sources"] == beton["where"] and tip["ai"].startswith("ИИ сопоставил названия")
+    assert set(beton["tips"]) == {"n", "type", "name", "text", "impact", "where"}                       # подсказка на любой ячейке строки
+    assert {r["type"] for r in rows} == {"Превышение объёма", "Рост цены", "Нет в ВОР", "Акт после срока"}
+
+
+def test_issue_table_html_mode_has_columns_and_no_clipping_css(both):
+    html = ledger_html(build_issue_rows(both[0]), "issues")
+    for title in ("Тип", "Работа", "Что не сходится", "Влияние, сом", "Где смотреть"):
+        assert f'"title": "{title}"' in html
+    assert "mode-issues" in html and "ellipsis" not in html and "overflow:hidden" not in html.replace(" ", "")
+    assert "data-label" in html and '"mode": "issues"' in html
+
+
+def test_summary_points_come_from_data(both):
+    points = summary_points(*both)
+    assert len(points) == 5
+    assert points[0] == "Найдено 13 возможных расхождений по 11 позициям и 2 документам (акт после срока)."
+    assert points[1] == "Чаще всего: превышение объёма (5)."
+    assert "1 378 030 сом" in points[2] and points[3].startswith("Проверить первыми: Монтаж системы видеонаблюдения (240 000 сом); Устройство цементной")
+    assert points[4] == "Без ИИ было бы 18 расхождений, из них 10 ложных; с ИИ 13, из них ложных 1."
+
+
+def test_html_table_escapes_and_labels_cells():
+    import pandas as pd
+    from ui.components import chain_html, html_table
+    t = html_table(pd.DataFrame({"А": ["<b>x</b>"], "Б": ["y"]}))
+    assert "&lt;b&gt;" in t and 'data-label="А"' in t and "<b>x" not in t
+    ex = [{"kind": "pair_rejected", "vor": None, "doc": "д", "code_rule": "р", "ai": "и (уверенность 0,50)", "code_check": "к"},
+          {"kind": "row_none", "vor": "в", "doc": "д", "code_rule": "р", "ai": "и", "code_check": "к"}]
+    c = chain_html(ex)
+    assert "✕ отклонено" in c and "✓ принято" in c and "<th>Что решил ИИ (уверенность)</th>" in c and "—" in c
+
+
+def test_chain_header_arrows_use_the_arrow_character():
+    from ui.styles import CSS
+    assert 'content: "→"' in CSS and "\x11" not in CSS                 # стрелка между заголовками цепочки, а не управляющий символ
+    assert "text-overflow" not in CSS.replace("text-overflow: clip", "")

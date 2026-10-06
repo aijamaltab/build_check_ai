@@ -11,7 +11,8 @@ CSS = FONT_IMPORT + """
         --sans: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif; }
 html, body, .stApp, .stApp :is(p, span, div, label, a, li, button, input, textarea, select, h1, h2, h3, h4):not([data-testid="stIconMaterial"], [data-testid="stIconMaterial"] *) { font-family: var(--sans); }
 .stApp { background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums; }
-.block-container { max-width: 1240px; padding-top: 1rem; padding-bottom: 2.5rem; }
+.block-container { max-width: 1240px; padding-top: 3.6rem; padding-bottom: 2.5rem; }
+[data-testid="stHeader"] { background: transparent; }
 #MainMenu, footer { visibility: hidden; }
 [data-testid="stSidebar"] { background: #fff; border-right: 1px solid var(--line); }
 [data-testid="stSidebarNav"] a { border-radius: 4px; }
@@ -109,9 +110,56 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
 .claim { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; margin: 0.6rem 0; line-height: 1.5; }
 .claim-warn { border-left-color: #B5792F; }
 .app-footer { color: var(--muted); font-size: 0.82rem; text-align: center; margin-top: 1.6rem; padding-top: 0.8rem; border-top: 1px solid var(--line); }
-@media (max-width: 900px) { .ex-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 8px 0 4px 0; }
+.step { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; font-size: 0.92rem; line-height: 1.4; }
+.steps-note { color: var(--muted); font-size: 0.84rem; margin: 4px 0 8px 0; }
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 6px 0; }
+.tile { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 12px; min-height: 64px; }
+.tile-label { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.tile-value { color: var(--ink); font-size: 21px; font-weight: 600; line-height: 1.25; white-space: nowrap; }
+.tbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin: 10px 0 4px 0; }
+.tcounts { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 0.86rem; color: var(--ink); }
+.tcount i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+.roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 10px 0; }
+.role { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+.role-title { font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+.role-text { font-size: 0.92rem; line-height: 1.45; overflow-wrap: anywhere; }
+.chain { width: 100%; border-collapse: separate; border-spacing: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); table-layout: fixed; }
+.chain th { text-align: left; font-size: 0.82rem; font-weight: 600; background: #EEF2F6; padding: 8px 22px 8px 10px; position: relative; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.chain th:not(:last-child)::after { content: "→"; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); color: var(--accent); font-weight: 400; }
+.chain td { vertical-align: top; padding: 9px 10px; border-bottom: 1px solid #E8ECF1; font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
+.chain tr:last-child td { border-bottom: 0; }
+.chain .sub { color: var(--muted); font-size: 0.8rem; }
+.plain { width: 100%; border-collapse: separate; border-spacing: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); margin: 4px 0 8px 0; }
+.plain th { text-align: left; font-size: 0.82rem; font-weight: 600; background: #EEF2F6; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.plain td { vertical-align: top; padding: 7px 10px; border-bottom: 1px solid #E8ECF1; font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
+.plain tr:last-child td { border-bottom: 0; }
+.plain tr.row-false td { background: #FFF8E1; }
+.verdict.v-ok b { color: #1E5E22; }
+.verdict.v-no b { color: #5B6877; }
+.errbox { background: #FFF8E1; border: 1px solid #EBCF8A; border-radius: var(--radius); padding: 10px 14px; margin: 0.6rem 0; line-height: 1.5; }
+.summary-list { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); margin: 4px 0 8px 0; padding: 8px 14px 8px 32px; }
+.summary-list li { margin: 3px 0; line-height: 1.45; }
+.st-key-demo_files [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; align-items: center; gap: 0.5rem; }
+.st-key-demo_files [data-testid="stColumn"] { min-width: 0; }
+.st-key-demo_files p { margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.st-key-demo_files button { min-height: 2rem; padding: 0 0.6rem; white-space: normal; }
+.st-key-demo_files button p { overflow: visible; text-overflow: clip; white-space: normal; }
+[data-testid="stFileUploader"] span, [data-testid="stFileUploader"] small { text-overflow: clip !important; white-space: normal !important; overflow: visible !important; }
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] style) { display: none; }
+@media (max-width: 900px) { .ex-grid { grid-template-columns: repeat(2, 1fr); } .tiles { grid-template-columns: repeat(3, 1fr); } .roles, .steps { grid-template-columns: 1fr; } }
 @media (max-width: 640px) {
-  .block-container { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 0.8rem; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .chain, .chain tbody, .chain tr, .chain td, .plain, .plain tbody, .plain tr, .plain td { display: block; width: 100%; }
+  .chain thead, .plain thead { display: none; }
+  .plain td { border: 0; padding: 3px 10px; }
+  .plain td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .plain tr { border-bottom: 1px solid var(--line); padding: 5px 0; }
+  .chain tr { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  .chain td { border: 0; padding: 4px 10px; }
+  .chain td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .block-container { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 3.6rem; }
   .hero-title { font-size: 1.25rem; }
   .trio { grid-template-columns: 1fr; gap: 8px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }

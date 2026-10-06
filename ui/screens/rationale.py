@@ -1,8 +1,9 @@
 """Страница «Обоснование»: что даёт ИИ. Цифры берутся из двух прогонов демо (без ИИ и с ИИ) и эталона синтетики."""
 import streamlit as st
 
+from src.config import load_config
 from ui import components as ui
-from ui.data import compact_rows, detail_rows, false_issue_ids, fmt_conf, quality_metrics, traffic_segments
+from ui.data import compact_rows, detail_rows, false_issue_ids, fmt_conf, fmt_num, quality_metrics, traffic_segments
 from ui.loader import build_demo
 from ui.screens.files import render_files
 
@@ -49,28 +50,33 @@ def render() -> None:
     ui.render(ui.section_html("Что показывает каждый режим", "В колонке «По эталону» видно, какие расхождения ложные."))
     tab_without, tab_with = st.tabs([f"Без ИИ ({len(without_ai['issues'])})", f"С ИИ ({len(with_ai['issues'])})"])
     with tab_without:
-        ui.stretch(st.dataframe, compact_rows(without_ai["issues"], without_ai["positions"], false_without), hide_index=True, height=460)
+        ui.render(ui.html_table(compact_rows(without_ai["issues"], without_ai["positions"], false_without), mark_false=True))
     with tab_with:
-        ui.stretch(st.dataframe, compact_rows(with_ai["issues"], with_ai["positions"], false_with), hide_index=True, height=460)
+        ui.render(ui.html_table(compact_rows(with_ai["issues"], with_ai["positions"], false_with), mark_false=True))
 
     ui.render(ui.section_html("Что сопоставил ИИ", "Пары названий, которые правила не склеили, а ИИ сопоставил. Код проверил единицу и числа."))
     import pandas as pd
     pairs = pd.DataFrame([{"Документ": {"act": "Акт", "estimate": "Смета"}.get(p["doc_type"], "Док."), "Как написано в документе": p["doc"],
                            "Как написано в ВОР": p["vor"], "Уверенность": fmt_conf(p["confidence"]), "Причина (ответ ИИ)": p["reason"]}
                           for p in with_ai["ai_pairs_all"]])
-    ui.stretch(st.dataframe, pairs, hide_index=True, height=420)
+    ui.render(ui.html_table(pairs))
 
     if examples:
-        ui.render(ui.section_html("Как ИИ и код делят работу",
-                                  "ИИ предлагает пару названий, код применяет правила и проверяет единицы и числа. Числа ИИ не считает."))
-        ui.render(ui.examples_html(examples))
+        ui.render(ui.section_html("Как ИИ и код делят работу", "Числа ИИ не считает. Ниже шесть примеров из сохранённых ответов ИИ."))
+        ui.render(ui.roles_html(fmt_num(load_config()["rules"]["volume_exceeded"]["tolerance_pct"])))
+        ui.render(ui.chain_html(examples))
 
     wrong = [r for _, r in compact_rows(with_ai["issues"], with_ai["positions"], false_with).iterrows() if r["По эталону"].startswith("ложное")]
     ui.render(ui.section_html("Где ИИ ошибается", "Поэтому окончательное решение всегда за специалистом."))
     if wrong:
-        names = "; ".join(f"«{r['Работа']}» ({r['Влияние']})" for r in wrong)
-        ui.render(ui.claim_html(f"С ИИ осталось {len(wrong)} ложное расхождение: {names}. ИИ не нашёл в ВОР пару, хотя она есть. "
-                                f"Такие случаи помечены «ИИ не нашёл пару в ВОР, требует проверки».", warn=True))
+        false_rows = with_ai["issues"][with_ai["issues"]["issue_id"].isin(false_with)]
+        none = next((x for x in false_rows["ai_none"] if x), None)
+        conf = f", уверенность {fmt_conf(none['confidence'])}" if none else ""
+        parts = [f"«{r['Работа']}» ({r['Влияние']}{conf})" for r in wrong]
+        names = "; ".join(parts)
+        ui.render(f'<div class="errbox">С ИИ осталось {len(wrong)} ложное расхождение: {ui.escape(names)}. ИИ не нашёл в ВОР пару, хотя она есть. '
+                  'Человек ловит это при проверке: расхождение помечено «ИИ не нашёл пару в ВОР, требует проверки», рядом указан файл, лист и строка, '
+                  'специалист открывает ведомость и видит, что позиция там есть.</div>')
     else:
         ui.render(ui.claim_html("В этом прогоне ложных расхождений с ИИ нет, но на других документах они возможны."))
     with st.expander("Исходные файлы демо", expanded=False):

@@ -525,6 +525,14 @@ def traffic_legend() -> str:
             "Зелёный: факт в пределах допуска.")
 
 
+def traffic_legend_short() -> str:
+    """Пояснение цветов одной строкой; допуски из config/rules.yaml."""
+    rules = load_config()["rules"]
+    over, under = rules["volume_exceeded"]["tolerance_pct"], rules["position_status"]["green_under_tolerance_pct"]
+    return (f"Красный: расхождение или факт выше плана более чем на {fmt_num(over)} %. Жёлтый: факт ниже плана более чем на {fmt_num(under)} %. "
+            "Зелёный: в пределах допуска.")
+
+
 def chart_frames(issues: pd.DataFrame) -> tuple:
     """-> (по типам: число расхождений, по типам: влияние на бюджет). Все четыре типа всегда присутствуют, подписи готовые строки."""
     counts, impacts = [], []

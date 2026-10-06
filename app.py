@@ -7,7 +7,7 @@ import streamlit as st  # noqa: E402
 from ui import components as ui  # noqa: E402
 from ui.data import fmt_run_at  # noqa: E402
 from ui.loader import build_demo  # noqa: E402
-from ui.screens import demo, rationale, results, upload  # noqa: E402
+from ui.screens import home, rationale, results, upload  # noqa: E402
 from ui.styles import inject  # noqa: E402
 
 st.set_page_config(page_title="Сверка строительных документов", layout="wide", initial_sidebar_state="collapsed")
@@ -17,11 +17,11 @@ inject()
 pages = {}
 
 
-def demo_view() -> None:
-    demo.render(pages["upload"], pages["results"])
+def home_view() -> None:
+    home.render(pages["upload"], pages["results"], pages["rationale"])
 
 
-pages["demo"] = st.Page(demo_view, title="Демо", url_path="demo", default=True)
+pages["home"] = st.Page(home_view, title="Главная", url_path="home", default=True)
 pages["upload"] = st.Page(upload.render, title="Проверить свои файлы", url_path="upload")
 pages["results"] = st.Page(results.render, title="Сверочная ведомость", url_path="ledger")
 pages["rationale"] = st.Page(rationale.render, title="Как работает ИИ", url_path="rationale")

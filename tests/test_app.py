@@ -49,36 +49,69 @@ def results_run() -> AppTest:
     return AppTest.from_function(results_app, default_timeout=180).run()
 
 
-# ---------- страница «Демо» ----------
-def test_demo_page_shows_summary_and_top_issues(llm_env):
+# ---------- страница «Главная» ----------
+START = "Загрузить файлы в систему и сверить"
+
+
+def home_started() -> AppTest:
+    at = run_app()
+    next(b for b in at.button if b.label == START).click().run()
+    return at
+
+
+
+def test_home_before_click_shows_intro_and_files_but_no_result(llm_env):
     at = run_app()
     assert not at.exception
     html = body(at)
-    assert "Находит расхождения между ВОР, сметой, договором и актами" in html and "Демо на синтетических данных" in html
-    assert "ИИ читает и сопоставляет названия, код считает и проверяет числа" in html
-    assert 'class="banner"' not in html
-    for text in ("Возможных расхождений", "Возможное влияние на бюджет, сом", "Позиции с отклонением от плана",
-                 "красные и жёлтые позиции: расхождение или выполнение меньше плана", "1 378 030",
-                 "Оценка размера возможных расхождений, не вывод о потерях"):
-        assert html.count(text) == 1                                              # метрики один раз
-    for label in ("Красные: 11 позиций", "Жёлтые: 7 позиций", "Зелёные: 30 позиций"):
-        assert label in html
-    assert html.count('class="irow"') == 3 and 'class="issue-card"' not in html and "Главные расхождения" in html   # топ-3 компактными строками
-    assert html.count('class="legend"') == 1                                      # легенда один раз
-    assert "Исходные файлы" not in html and len(at.dataframe) == 0                # просмотрщик файлов убран с главной
+    assert "Сверка строительных документов" in html and "Сопоставляет ВОР, смету, договор и акты" in html
+    for text in ("Приводит четыре документа к одной таблице", "ИИ сопоставляет названия, код считает объёмы и цены",
+                 "Показывает возможные расхождения и их влияние на бюджет в сомах",
+                 "ВОР: ведомость объёмов работ, список работ и их объёмов по проекту", "Демо-проект: файлы", "Данные демо синтетические"):
+        assert text in html
+    assert "trio-num" not in html and html.count('class="step"') == 3
+    assert len(at.download_button) == 9 and any(b.label == START for b in at.button)       # девять файлов и главная кнопка
+    for hidden in ('class="tile"', 'class="tbar"', "Итоги сверки", "Возможные расхождения"):
+        assert hidden not in html                                                       # до нажатия результата нет
+    assert len(at.get("iframe")) == 0
     assert "Прототип. Данные синтетические. Результат требует проверки специалистом." in html
-    assert "Без ИИ и с ИИ" not in html
+
+
+def test_home_file_table_lists_nine_files_with_roles_and_row_counts(llm_env):
+    at = run_app()
+    text = " ".join(m.value for m in at.markdown)
+    for name in ("vor_1.xlsx", "vor_2.xlsx", "estimate.xlsx", "contract.xlsx", "act_1.xlsx", "act_5.xlsx"):
+        assert name in text
+    assert sorted(d.label for d in at.download_button) == ["Скачать"] * 9
+
+
+def test_home_after_click_shows_tiles_traffic_issue_table_and_summary(llm_env):
+    at = home_started()
+    assert not at.exception
+    html = body(at)
+    assert "Результат собран из сохранённых ответов ИИ (демо-режим, ключ не используется)" in html
+    assert html.count('class="tile"') == 5
+    for label in ("Строк в документах", "Позиций ВОР", "Расхождений", "Возможное влияние, сом", "Позиций с отклонением от плана"):
+        assert label in html
+    assert ">180<" in html and ">48<" in html and ">13<" in html and "1 378 030" in html and ">18<" in html
+    assert html.count('class="tbar"') == 1 and html.count('class="legend"') == 1                  # светофор и пояснение один раз
+    assert "Красные: <b>11</b>" in html and "Жёлтые: <b>7</b>" in html and "Зелёные: <b>30</b>" in html
+    assert 'class="issue-card"' not in html and len(at.get("iframe")) == 1
+    assert "Итоги сверки" in html and html.count("<li>") == 5
+    assert "Найдено 13 возможных расхождений" in html and "Без ИИ было бы 18 расхождений, из них 10 ложных; с ИИ 13, из них ложных 1." in html
+    assert "Проверить первыми: Монтаж системы видеонаблюдения (240 000 сом)" in html
+    assert any(b.label == "Начать заново" for b in at.button)
+
+
+def test_home_reset_returns_to_files_view(llm_env):
+    at = home_started()
+    next(b for b in at.button if b.label == "Начать заново").click().run()
+    assert not at.exception and 'class="tile"' not in body(at) and any(b.label == START for b in at.button)
 
 
 def test_topbar_shows_project_run_date_and_mode(llm_env):
     html = page(run_app())
     assert "Проект:" in html and "Капремонт школы" in html and "Прогон:" in html and "Режим:" in html and "С ИИ (из кэша)" in html
-
-
-def test_demo_metric_labels_rows_and_traffic_positions_honestly(llm_env):
-    html = body(run_app())
-    assert "Строк в документах" in html and "ВОР, смета и акты, без договора" in html and ">180<" in html
-    assert "Позиций ВОР в светофоре: 48" in html and "Позиций проверено" not in html
 
 
 # ---------- страница «Сверочная ведомость» ----------
@@ -105,13 +138,18 @@ def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
                  "Как ИИ и код делят работу", "Где ИИ ошибается", "Разборка пола"):
         assert text in html
     assert html.count('class="traffic"') == 2
-    assert html.count('class="ex-card"') == 6 and "ИИ решил" in html and "Код проверил" in html
+    assert 'class="ex-card"' not in html and html.count('class="role"') == 3
+    for text in ("читает и сопоставляет названия", "считает объёмы и цены, применяет допуск 5 %", "ответ ИИ принимается, только если совпали единица измерения, вид работ, числа и уверенность не ниже порога"):
+        assert text in html
+    assert "<th>Название в ВОР</th>" in html and "<th>Итог</th>" in html and html.count('class="chain"') == 1
+    assert html.count("✓ принято") + html.count("✕ отклонено") == 6
+    assert "Разборка пола" in html and "уверенность 0,90" in html and "Человек ловит это при проверке" in html
     assert "Без ИИ найдено 8 из 12 заложенных расхождений и 10 ложных. С ИИ найдено 12 из 12 и 1 ложное" in html
     assert [t.label for t in at.tabs] == ["Без ИИ (18)", "С ИИ (13)"]
-    without_ai, with_ai, pairs = (d.value for d in list(at.dataframe)[:3])
-    assert len(without_ai) == 18 and (without_ai["По эталону"].str.startswith("ложное")).sum() == 10
-    assert len(with_ai) == 13 and (with_ai["По эталону"].str.startswith("ложное")).sum() == 1
-    assert {"Как написано в документе", "Как написано в ВОР", "Уверенность", "Причина (ответ ИИ)"} <= set(pairs.columns) and len(pairs) >= 20
+    assert html.count('class="plain"') == 3 and html.count('class="row-false"') == 11             # таблицы с переносом текста; ложные: 10 без ИИ и 1 с ИИ
+    for head in ("Как написано в документе", "Как написано в ВОР", "Уверенность", "Причина (ответ ИИ)", "По эталону"):
+        assert f"<th>{head}</th>" in html
+    assert html.count("<tr") > 50
 
 
 def test_rationale_page_has_collapsed_source_files_viewer(llm_env):
@@ -122,13 +160,13 @@ def test_rationale_page_has_collapsed_source_files_viewer(llm_env):
     html = body(at)
     assert "Ведомость объёмов работ (ВОР)" in html and "Колонки, которые распознаёт программа" in html
     assert html.index("Где ИИ ошибается") < html.index("Исходные файлы")                 # просмотрщик в самом низу
-    assert list(at.dataframe[-1].value.columns)[:3] == ["Строка", "A", "B"]
+    assert list(at.dataframe[0].value.columns)[:3] == ["Строка", "A", "B"]
 
 
 def test_app_registers_four_pages_in_new_order():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    titles = ["Демо", "Проверить свои файлы", "Сверочная ведомость", "Как работает ИИ"]
+    titles = ["Главная", "Проверить свои файлы", "Сверочная ведомость", "Как работает ИИ"]
     positions = [source.index(f'title="{t}"') for t in titles]
     assert positions == sorted(positions)
-    assert all(f'url_path="{p}"' in source for p in ("demo", "upload", "ledger", "rationale"))
+    assert all(f'url_path="{p}"' in source for p in ("home", "upload", "ledger", "rationale"))
     assert 'position="sidebar"' in source                                    # навигация слева

@@ -24,8 +24,9 @@ def stretch(call, *args, **kwargs):
 
 
 # ---------- страница-витрина ----------
-def hero_html(title: str, lead: str, pill: str, note: str = "") -> str:
-    return (f'<div class="hero"><span class="pill">{escape(pill)}</span><div class="hero-title">{escape(title)}</div>'
+def hero_html(title: str, lead: str, pill: str = "", note: str = "") -> str:
+    tag = f'<span class="pill">{escape(pill)}</span>' if pill else ""
+    return (f'<div class="hero">{tag}<div class="hero-title">{escape(title)}</div>'
             f'<div class="hero-lead">{escape(lead)}</div>' + (f'<div class="hero-note">{escape(note)}</div>' if note else "") + "</div>")
 
 
@@ -224,3 +225,67 @@ def segmented(label: str, options: list, default: str, key: str) -> str:
 def topbar_html(project: str, run_at: str, mode: str) -> str:
     return (f'<div class="topbar"><span class="topbar-item"><b>Проект:</b> {escape(project)}</span>'
             f'<span class="topbar-item"><b>Прогон:</b> {escape(run_at)}</span><span class="topbar-item"><b>Режим:</b> {escape(mode)}</span></div>')
+
+
+# ---------- главная страница: шаги, плитки, тонкий светофор ----------
+def steps_html(items: list, note: str = "") -> str:
+    """Три короткие строки в ряд (на телефоне друг под другом), без нумерации и без больших карточек, и строка-пояснение."""
+    cells = "".join(f'<div class="step">{escape(t)}</div>' for t in items)
+    return f'<div class="steps">{cells}</div>' + (f'<div class="steps-note">{escape(note)}</div>' if note else "")
+
+
+def tiles_html(tiles: list) -> str:
+    """Маленькие плитки показателей (около 64 px): [{label, value, hint}]; на телефоне по две в ряд."""
+    cells = "".join(f'<div class="tile"' + (f' title="{escape(t["hint"])}"' if t.get("hint") else "") +
+                    f'><div class="tile-label">{escape(t["label"])}</div><div class="tile-value">{escape(t["value"])}</div></div>' for t in tiles)
+    return f'<div class="tiles">{cells}</div>'
+
+
+def traffic_thin_html(segments: list, legend: str) -> str:
+    """Тонкая полоса светофора (12 px) с числами и пояснением цветов одной строкой."""
+    total = sum(s["count"] for s in segments) or 1
+    bar = "".join(f'<span style="background:{s["bg"]};flex:{max(s["count"], 1) / total:.4f}"></span>' for s in segments)
+    counts = "".join(f'<span class="tcount"><i style="background:{s["bg"]}"></i>{escape(s["word"])}: <b>{s["count"]}</b></span>' for s in segments)
+    return (f'<div class="tbar" role="img" aria-label="{escape(", ".join(s["label"] for s in segments))}">{bar}</div>'
+            f'<div class="tcounts">{counts}</div><div class="legend">{escape(legend)}</div>')
+
+
+# ---------- «Как ИИ и код делят работу» ----------
+ROLES = [("ИИ", "читает и сопоставляет названия"),
+         ("Код", "считает объёмы и цены, применяет допуск {tolerance} %"),
+         ("Проверка кодом", "ответ ИИ принимается, только если совпали единица измерения, вид работ, числа и уверенность не ниже порога")]
+VERDICT = {"pair_accepted": ("ok", "✓", "принято", "пара склеена"), "row_accepted": ("ok", "✓", "принято", "пара склеена"),
+           "pair_rejected": ("no", "✕", "отклонено", "пара не склеена"), "row_none": ("ok", "✓", "принято", "пары в ВОР нет")}
+
+
+def roles_html(tolerance) -> str:
+    cells = "".join(f'<div class="role"><div class="role-title">{escape(t)}</div><div class="role-text">{escape(text.format(tolerance=tolerance))}</div></div>'
+                    for t, text in ROLES)
+    return f'<div class="roles">{cells}</div>'
+
+
+def chain_html(examples: list) -> str:
+    """Таблица цепочкой: название в ВОР → в акте → что решили правила → что решил ИИ → проверка кодом → итог.
+    На телефоне строки превращаются в блоки с подписями полей; текст всегда переносится."""
+    heads = ["Название в ВОР", "Название в акте", "Что решили правила", "Что решил ИИ (уверенность)", "Проверка кодом", "Итог"]
+    thead = "".join(f"<th>{h}</th>" for h in heads)
+    body = ""
+    for e in examples:
+        kind, icon, word, note = VERDICT[e["kind"]]
+        vor = f"«{escape(e['vor'])}»" if e["vor"] else "—"
+        cells = [vor, f"«{escape(e['doc'])}»", escape(e["code_rule"]), escape(e["ai"]),
+                 escape(e["code_check"]), f'<span class="verdict v-{kind}"><b>{icon} {word}</b></span><div class="sub">{note}</div>']
+        body += "<tr>" + "".join(f'<td data-label="{h}">{c}</td>' for h, c in zip(heads, cells)) + "</tr>"
+    return f'<table class="chain"><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>'
+
+
+def html_table(frame: pd.DataFrame, mark_false: bool = False) -> str:
+    """Таблица с переносом текста (st.dataframe режет длинные ячейки). Ячейки экранируются; на телефоне строки становятся блоками."""
+    heads = list(frame.columns)
+    thead = "".join(f"<th>{escape(str(h))}</th>" for h in heads)
+    rows = ""
+    for _, r in frame.iterrows():
+        bad = mark_false and str(r.get("По эталону", "")).startswith("ложное")
+        cells = "".join(f'<td data-label="{escape(str(h))}">{escape(str(r[h]))}</td>' for h in heads)
+        rows += f'<tr class="{"row-false" if bad else ""}">{cells}</tr>'
+    return f'<table class="plain"><thead><tr>{thead}</tr></thead><tbody>{rows}</tbody></table>'
