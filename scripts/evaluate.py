@@ -162,6 +162,8 @@ def main() -> int:
     parser.add_argument("--source", default=str(ROOT / "data" / "synthetic"))
     parser.add_argument("--gt", default=str(ROOT / "data" / "ground_truth.csv"))
     parser.add_argument("--traps", default=str(ROOT / "data" / "traps.csv"))
+    parser.add_argument("--set", default=None, choices=["set_2", "set_3"],
+                        help="дополнительный набор data/synthetic_sets/<набор>: файлы, эталон и ловушки берутся оттуда")
     parser.add_argument("--ai-ceiling", action="store_true",
                         help="режим synonyms_llm с фейковыми судьями по эталону генератора (потолок, не оценка модели)")
     parser.add_argument("--gemini-cache", action="store_true",
@@ -169,8 +171,14 @@ def main() -> int:
     parser.add_argument("-v", "--verbose", action="store_true", help="ложные срабатывания и ложные «не сопоставлено» списком")
     args = parser.parse_args()
 
+    profile = None
+    if args.set:
+        from synthetic_profiles import PROFILES, set_dir
+        profile, folder = PROFILES[args.set], set_dir(args.set)
+        args.source, args.gt, args.traps = str(folder), str(folder / "ground_truth.csv"), str(folder / "traps.csv")
+        print(f"Набор {args.set}: {profile['object']['full']} (seed {profile['seed']}), файлы {args.source}\n")
     gt_rows, trap_rows = read_csv(args.gt), read_csv(args.traps)
-    truth = vm.load_truth()
+    truth = vm.load_truth(profile)
     thresholds = cfg["rules"]["evaluate"]["thresholds"]
     results = {}
     with tempfile.TemporaryDirectory() as tmp:

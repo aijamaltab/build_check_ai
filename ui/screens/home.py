@@ -17,7 +17,7 @@ VOR_NOTE = "ВОР: ведомость объёмов работ, список �
 ROLE_RU = {"vor": "ВОР", "estimate": "Смета", "contract": "Договор", "act": "Акты"}
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 RUN_KEY = "home_run"
-CACHE_NOTE = "Результат собран из сохранённых ответов ИИ (демо-режим, ключ не используется)"
+CACHE_NOTE = "Результат собран из сохранённых ответов ИИ"
 
 
 def reset() -> None:

@@ -31,13 +31,14 @@ from src.matching import (compute_matching, load_rows, resolve_candidates, resol
 NO_VOR_ITEMS = {"X1", "X2"}      # позиции, которых нет в ВОР: «не сопоставлена» для них правильный результат
 
 
-def load_truth() -> dict:
-    """(файл, строка) -> item_no по журналу генератора."""
+def load_truth(profile=None) -> dict:
+    """(файл, строка) -> item_no по журналу генератора. profile: профиль набора из scripts/synthetic_profiles.py (None = базовый)."""
     spec = importlib.util.spec_from_file_location("generate_synthetic", ROOT / "scripts" / "generate_synthetic.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     with tempfile.TemporaryDirectory() as tmp:
-        generated = mod.generate(out_dir=tmp, meta_dir=tmp)
+        extra = {"seed": profile["seed"], "profile": profile} if profile else {}
+        generated = mod.generate(out_dir=tmp, meta_dir=tmp, **extra)
     return {(r["file"], r["row"]): r["item_no"] for r in generated.log}
 
 

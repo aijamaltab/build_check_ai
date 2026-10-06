@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import datetime as dt
 import io
@@ -31,6 +32,7 @@ from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SEED = 42
+OBJECT = {"full": "Капитальный ремонт СШ № 99", "short": "СШ № 99"}   # название вымышленного объекта (профили наборов меняют)
 FIXED_DT = dt.datetime(2025, 1, 1, 0, 0, 0)
 
 CONTRACT_START = dt.date(2025, 3, 1)
@@ -399,8 +401,8 @@ class Generator:
 
     # ---------- ВОР ----------
     def header_vor(self, b, ncols, subtitle):
-        b.put(["Стройка: Капитальный ремонт СШ № 99 (синтетический объект)"], merge_to=ncols)
-        b.put(["Объект: СШ № 99, вымышленный объект, синтетические данные"], merge_to=ncols)
+        b.put([f"Стройка: {OBJECT['full']} (синтетический объект)"], merge_to=ncols)
+        b.put([f"Объект: {OBJECT['short']}, вымышленный объект, синтетические данные"], merge_to=ncols)
         b.put([None] * (ncols - 2) + ["УТВЕРЖДАЮ"])
         b.put([None] * (ncols - 2) + [f"Директор (вымышленная должность) ________ {APPROVE_DATE}"])
         b.blank()
@@ -486,7 +488,7 @@ class Generator:
         b = Book("estimate.xlsx", "Смета", [8, 18, 60, 22, 10, 18, 18])
         b.put(["ЛОКАЛЬНАЯ СМЕТА № 1 (Локальный сметный расчёт)"], bold=True, merge_to=7)
         b.put(["Форма по мотивам формы 4, синтетическая. Цены текущие, ориентировочные, не рыночные"], merge_to=7)
-        b.put(["Стройка: Капитальный ремонт СШ № 99 (синтетический объект)"], merge_to=7)
+        b.put([f"Стройка: {OBJECT['full']} (синтетический объект)"], merge_to=7)
         b.blank()
         b.put(["№ поз.", "Шифр норматива", "Наименование", "Ед. изм.", "Кол-во", "Стоимость единицы, сом",
                "Общая стоимость, сом"], bold=True)
@@ -528,7 +530,7 @@ class Generator:
         b.put(["ДОГОВОР ПОДРЯДА № 12 (синтетический)"], bold=True, merge_to=2)
         b.put(["Заказчик", "Заказчик (вымышленная организация)"])
         b.put(["Подрядчик", "Подрядчик (вымышленная организация)"])
-        b.put(["Объект", "СШ № 99 (синтетический объект)"])
+        b.put(["Объект", f"{OBJECT['short']} (синтетический объект)"])
         b.put(["Срок начала работ", CONTRACT_START])
         b.put(["Срок выполнения работ до", CONTRACT_DEADLINE])
         b.put(["Цена договора, сом", int(round(self.est_total / 1000.0) * 1000)])
@@ -583,7 +585,7 @@ class Generator:
             title = b.put([f"АКТ № {act_no} от {date.strftime('%d.%m.%Y')} о приёмке выполненных работ"],
                           bold=True, merge_to=7)
             self.act_title_row[act_no] = title
-            b.put(["Объект: СШ № 99 (синтетический объект)"], merge_to=7)
+            b.put([f"Объект: {OBJECT['short']} (синтетический объект)"], merge_to=7)
             b.put(["Договор подряда № 12 (синтетический)"], merge_to=7)
             b.blank()
             if tpl == "a":
@@ -787,8 +789,38 @@ class Generator:
         return "\n".join(lines)
 
 
-def generate(seed: int = DEFAULT_SEED, out_dir=ROOT / "data" / "synthetic", meta_dir=ROOT / "data") -> Generator:
-    return Generator(seed, out_dir, meta_dir).run()
+@contextlib.contextmanager
+def profile_context(profile: dict | None):
+    """Подставляет профиль набора (data/synthetic_sets, scripts/synthetic_profiles.py) вместо каталога базового набора на время with.
+
+    Профиль: object (full, short), items (номер -> три названия), long_names, materials, extras, traps, qty_factor, price_factor.
+    Объёмы и цены масштабируются одинаково во всех сценариях (FIXED_ROWS, PRICE_ALL, EXTRAS), поэтому доли расхождений
+    (+20 %, +3 % и т. д.) не меняются. profile=None оставляет базовый набор как есть (побайтно тот же результат)."""
+    global ITEMS, BY_NO, LONG_NAMES, MATERIALS, EXTRAS, FIXED_ROWS, PRICE_ALL, TRAPS, OBJECT
+    if not profile:
+        yield
+        return
+    saved = (ITEMS, BY_NO, LONG_NAMES, MATERIALS, EXTRAS, FIXED_ROWS, PRICE_ALL, TRAPS, OBJECT)
+    qf, pf = profile["qty_factor"], profile["price_factor"]
+    try:
+        ITEMS = [Item(it.no, it.section, it.unit, round(it.qty * qf, 4), round(it.price * pf, 2), *profile["items"][it.no]) for it in saved[0]]
+        BY_NO = {it.no: it for it in ITEMS}
+        LONG_NAMES = dict(profile["long_names"])
+        MATERIALS = dict(profile["materials"])
+        EXTRAS = {k: (profile["extras"][k], v[1], round(v[2] * qf, 4), round(v[3] * pf, 2), v[4], v[5]) for k, v in saved[4].items()}
+        FIXED_ROWS = {n: [(act, round(q * qf, 4), None if price is None else round(price * pf, 2)) for act, q, price in rows]
+                      for n, rows in saved[5].items()}
+        PRICE_ALL = {n: round(v * pf, 2) for n, v in saved[6].items()}
+        TRAPS = [(i, no, text) for (i, no, _), text in zip(saved[7], profile["traps"])]
+        OBJECT = dict(profile["object"])
+        yield
+    finally:
+        ITEMS, BY_NO, LONG_NAMES, MATERIALS, EXTRAS, FIXED_ROWS, PRICE_ALL, TRAPS, OBJECT = saved
+
+
+def generate(seed: int = DEFAULT_SEED, out_dir=ROOT / "data" / "synthetic", meta_dir=ROOT / "data", profile: dict | None = None) -> Generator:
+    with profile_context(profile):
+        return Generator(seed, out_dir, meta_dir).run()
 
 
 def main() -> None:
@@ -797,7 +829,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--out", default=str(ROOT / "data" / "synthetic"), help="куда писать xlsx")
     parser.add_argument("--meta", default=str(ROOT / "data"), help="куда писать ground_truth.csv, traps.csv, expected_status.csv")
+    parser.add_argument("--set", default=None, help="готовый набор из scripts/synthetic_profiles.py (set_2, set_3): seed, названия и папка "
+                                                    "data/synthetic_sets/<набор> подставляются сами (xlsx и CSV эталона лежат вместе)")
     args = parser.parse_args()
+    if args.set:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from synthetic_profiles import PROFILES, set_dir
+        profile = PROFILES[args.set]
+        out = set_dir(args.set)
+        print(generate(profile["seed"], out, out, profile).summary())
+        return
     print(generate(args.seed, args.out, args.meta).summary())
 
 

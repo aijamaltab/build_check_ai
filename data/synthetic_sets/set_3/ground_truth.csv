@@ -1,0 +1,13 @@
+gt_id,issue_type,scenario,item_no,canonical_name,source_file,source_sheet,source_row,related_rows,expected,actual,expected_impact_som
+1,volume_exceeded,,10,Бетонирование фундаментов бетоном М300,act_3.xlsx,Акт,7,vor_1.xlsx:ВОР:20;estimate.xlsx:Смета:23;act_2.xlsx:Акт:10;act_3.xlsx:Акт:7,68,78.4,101400
+2,volume_exceeded,,12,Арматурные стержни А500 d12,act_2.xlsx,Акт,12,vor_1.xlsx:ВОР:23;estimate.xlsx:Смета:25;act_1.xlsx:Акт:23;act_2.xlsx:Акт:12,7.6,9.12,117800
+3,volume_exceeded,,26,Цементно-песчаная штукатурка стен,act_2.xlsx,Акт,26,vor_1.xlsx:ВОР:42;estimate.xlsx:Смета:44;act_1.xlsx:Акт:31;act_2.xlsx:Акт:26,2560,2848,111600
+4,volume_exceeded,,21,Устройство кровли из металлопрофиля,act_3.xlsx,Акт,10,vor_1.xlsx:ВОР:35;estimate.xlsx:Смета:37;act_2.xlsx:Акт:21;act_3.xlsx:Акт:10,1000,1112,109200
+5,volume_exceeded,duplicate_in_two_acts,31,Выравнивающая цементная стяжка пола,act_3.xlsx,Акт,17,vor_1.xlsx:ВОР:47;estimate.xlsx:Смета:50;act_1.xlsx:Акт:33;act_2.xlsx:Акт:29;act_3.xlsx:Акт:17,1200,1600,210000
+6,price_increase,,23,Установка пластиковых окон с двойным стеклопакетом,act_2.xlsx,Акт,23,vor_1.xlsx:ВОР:38;estimate.xlsx:Смета:40;act_2.xlsx:Акт:23;act_3.xlsx:Акт:12,8500,9875,121000
+7,price_increase,,16,Кирпичная кладка несущих стен,act_1.xlsx,Акт,27,vor_1.xlsx:ВОР:28;estimate.xlsx:Смета:31;act_1.xlsx:Акт:27;act_2.xlsx:Акт:16,7750,8625,28000
+8,price_increase,,37,Установка светильников светодиодных панельных,act_3.xlsx,Акт,23,vor_2.xlsx:ВОР:28;estimate.xlsx:Смета:58;act_2.xlsx:Акт:33;act_3.xlsx:Акт:23,2125,2625,48000
+9,missing_in_vor,,X1,Устройство пандуса для маломобильных групп,act_3.xlsx,Акт,31,act_3.xlsx:Акт:31,0,120,195000
+10,missing_in_vor,,X2,Установка системы вызова персонала,act_2.xlsx,Акт,35,act_2.xlsx:Акт:35,0,0.8,240000
+11,late_act,,,Акт №4,act_4.xlsx,Акт,2,act_4.xlsx:Акт:2,2025-09-30,2025-10-17,
+12,late_act,,,Акт №5,act_5.xlsx,Акт,2,act_5.xlsx:Акт:2,2025-09-30,2025-11-14,

@@ -5,6 +5,7 @@
   python scripts/run_llm.py
   python scripts/run_llm.py --pause 6 --max-calls 40 --model gemini-2.5-flash-lite
   python scripts/run_llm.py --cache-only    # повторный прогон только по кэшу: API не вызывается, ключ не нужен
+  python scripts/run_llm.py --set set_2     # дополнительный набор data/synthetic_sets/set_2 (то же для set_3), ответы в тот же кэш
 
 Печатает число вызовов, ошибок, попаданий в кэш, ответов «нет ответа» и время. Ошибки и «нет ответа» в кэш не пишутся,
 поэтому после остановки по квоте можно просто запустить скрипт снова: уже полученные ответы возьмутся из кэша.
@@ -30,12 +31,17 @@ def main(argv=None) -> int:
     llm = cfg["rules"]["llm"]
     parser = argparse.ArgumentParser(description="Прогон data/synthetic в режиме llm (настоящий Gemini + кэш)")
     parser.add_argument("--source", default=str(ROOT / "data" / "synthetic"))
-    parser.add_argument("--db", default=str(ROOT / "data" / "cache" / "demo.db"))
+    parser.add_argument("--set", default=None, choices=["set_2", "set_3"],
+                        help="дополнительный набор data/synthetic_sets/<набор> вместо data/synthetic (база data/cache/<набор>.db, кэш общий)")
+    parser.add_argument("--db", default=None, help="по умолчанию data/cache/demo.db (для набора data/cache/<набор>.db)")
     parser.add_argument("--cache-only", action="store_true", help="только кэш, без вызовов API и без ключа")
     parser.add_argument("--pause", type=float, default=None, help="пауза между вызовами, с (по умолчанию 60 / rpm * запас по таблице limits для модели)")
     parser.add_argument("--max-calls", type=int, default=None, help="потолок вызовов к API за прогон")
     parser.add_argument("--model", default=None, help=f"модель на этот прогон (в конфиге {llm['model']})")
     args = parser.parse_args(argv)
+    if args.set:
+        args.source = str(ROOT / "data" / "synthetic_sets" / args.set)
+    args.db = args.db or str(ROOT / "data" / "cache" / f"{args.set or 'demo'}.db")
     if args.pause is not None:
         llm["call_pause_seconds"] = args.pause
     if args.max_calls is not None:

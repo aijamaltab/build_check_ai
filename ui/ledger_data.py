@@ -178,7 +178,7 @@ def build_issue_rows(results: dict) -> dict:
     return {"rows": rows, "total": len(rows)}
 
 
-def summary_points(results: dict, rules_results: dict) -> list:
+def summary_points(results: dict, rules_results: dict | None = None) -> list:
     """Итоги сверки текстом, только из данных: число и типы расхождений, влияние, что проверить первыми, сравнение с режимом без ИИ.
 
     Числа берутся из run_summary (results['summary']), issues и quality_metrics (scripts/evaluate.py по эталону синтетики)."""
@@ -192,11 +192,13 @@ def summary_points(results: dict, rules_results: dict) -> list:
     top_type = max(TYPE_ORDER, key=lambda t: counts.get(t, 0))
     by_impact = issues[issues["impact_som"].notna()].sort_values(["impact_som", "issue_id"], ascending=[False, True]).head(3)
     first = build_cards(by_impact, results["positions"])
-    a, b = quality_metrics(rules_results["issues"]), quality_metrics(issues)
-    return [
+    points = [
         f"Найдено {len(issues)} возможных расхождений {where}.",
         f"Чаще всего: {TYPE_RU[top_type].lower()} ({int(counts.get(top_type, 0))}).",
         f"Возможное влияние на бюджет: {fmt_num(summary['impact_som'])} сом (оценка размера расхождений, не вывод о потерях).",
         "Проверить первыми: " + "; ".join(f"{c['title']} ({c['impact_text']})" for c in first) + ".",
-        f"Без ИИ было бы {a['issues']} расхождений, из них {a['false']} ложных; с ИИ {b['issues']}, из них ложных {b['false']}.",
     ]
+    if rules_results is not None:        # сравнение с эталоном есть только у синтетики (демо и готовые наборы), у чужих файлов эталона нет
+        a, b = quality_metrics(rules_results["issues"]), quality_metrics(issues)
+        points.append(f"Без ИИ было бы {a['issues']} расхождений, из них {a['false']} ложных; с ИИ {b['issues']}, из них ложных {b['false']}.")
+    return points

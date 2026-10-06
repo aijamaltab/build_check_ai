@@ -110,6 +110,9 @@ class GeminiRowMatcher:
             else:
                 pending.append(ck)
 
+        notify = getattr(self, "progress", None)
+        if notify:
+            notify("rows", len(units) - len(pending), len(units))
         for start in range(0, len(pending), self.batch_size):
             chunk = pending[start:start + self.batch_size]
             prompt = build_row_prompt([units[ck]["row"] for ck in chunk], vor_items)
@@ -127,6 +130,8 @@ class GeminiRowMatcher:
                           "confidence": float(item["confidence"]), "reason": item["reason"]}
                 self.client.store(ck, answer, "row", ROW_PROMPT_VERSION, units[ck]["payload"])
                 answers[ck] = answer
+            if notify:
+                notify("rows", len(units) - len(pending) + min(start + self.batch_size, len(pending)), len(units))
 
         results = []
         for row, ck in zip(rows, row_cache_key):

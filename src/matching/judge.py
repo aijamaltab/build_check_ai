@@ -79,7 +79,12 @@ def resolve_candidates(conn, judge: PairJudge, cfg: dict, project_id: str) -> Re
     run = conn.execute("SELECT * FROM staging_match_run WHERE project_id = ?", (project_id,)).fetchone()
     norm = NameNormalizer(cfg["synonyms"], cfg["rules"], bool(run["use_synonyms"]), run["missing_side"])
     min_conf = cfg["rules"]["llm"]["min_confidence"]
-    for cand in open_rows:
+    notify = getattr(judge, "progress", None)         # необязательный отчёт о ходе (страница живого ИИ): (стадия, сделано, всего)
+    if notify:
+        notify("pairs", 0, len(open_rows))
+    for done, cand in enumerate(open_rows, 1):
+        if notify and done > 1:
+            notify("pairs", done - 1, len(open_rows))
         doc = conn.execute("SELECT * FROM staging_match_groups WHERE group_id = ?", (cand["group_id"],)).fetchone()
         vor = conn.execute("SELECT * FROM staging_match_groups WHERE group_id = ?", (cand["candidate_group_id"],)).fetchone()
         taken = conn.execute("SELECT 1 FROM staging_match_groups WHERE doc_id = ? AND matched_group_id = ?",
@@ -128,4 +133,6 @@ def resolve_candidates(conn, judge: PairJudge, cfg: dict, project_id: str) -> Re
     demote_judged_ambiguous(conn, project_id)
     refresh_kind_dq(conn, project_id, cfg)
     conn.commit()
+    if notify:
+        notify("pairs", len(open_rows), len(open_rows))
     return stats

@@ -89,7 +89,7 @@ def test_home_after_click_shows_tiles_traffic_issue_table_and_summary(llm_env):
     at = home_started()
     assert not at.exception
     html = body(at)
-    assert "Результат собран из сохранённых ответов ИИ (демо-режим, ключ не используется)" in html
+    assert "Результат собран из сохранённых ответов ИИ" in html and "ключ" not in html.lower()      # про ключ только на странице загрузки
     assert html.count('class="tile"') == 5
     for label in ("Строк в документах", "Позиций ВОР", "Расхождений", "Возможное влияние, сом", "Позиций с отклонением от плана"):
         assert label in html

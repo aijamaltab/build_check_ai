@@ -84,7 +84,14 @@ class GenaiTransport:
 
 class LlmClient:
     def __init__(self, llm_cfg: dict, *, transport=None, cache: LlmCache | None = None, sleep=time.sleep,
-                 clock=time.monotonic, env=None, root: Path = ROOT, today=lambda: dt.date.today().isoformat()):
+                 clock=time.monotonic, env=None, root: Path = ROOT, today=lambda: dt.date.today().isoformat(),
+                 cache_only: bool | None = None, api_key: str | None = None, gate=None):
+        """cache_only и api_key задаются явно для одного клиента и не зависят от переменных окружения (на хостинге процесс общий
+        для всех посетителей, менять окружение во время работы нельзя): cache_only=None оставляет прежнее поведение (config и
+        LLM_CACHE_ONLY), True запрещает вызовы API, False разрешает их даже при LLM_CACHE_ONLY=1 (страница живого ИИ).
+        api_key: ключ из st.secrets, иначе из переменной окружения. gate: функция без аргументов, вызывается перед каждым обращением
+        к API и возвращает None (можно) или текст причины остановки (сессионный и суточный лимиты сайта, считает вызывающий).
+        Лимит времени на прогон: llm.max_run_seconds (отсчёт от создания клиента), по умолчанию нет."""
         env = os.environ if env is None else env
         self.cfg = llm_cfg
         self.model = llm_cfg["model"]
@@ -92,8 +99,12 @@ class LlmClient:
         self.last_error = None
         self.stop_reason = None              # после этого новых вызовов API нет (кэш по-прежнему читается)
         self.consecutive_429 = 0
-        self._key = env.get(llm_cfg["api_key_env"]) or None
-        self.cache_only = bool(llm_cfg.get("cache_only")) or env.get(llm_cfg.get("cache_only_env", ""), "").lower() in TRUTHY
+        self._key = api_key or env.get(llm_cfg["api_key_env"]) or None
+        if cache_only is None:
+            self.cache_only = bool(llm_cfg.get("cache_only")) or env.get(llm_cfg.get("cache_only_env", ""), "").lower() in TRUTHY
+        else:
+            self.cache_only = bool(cache_only)
+        self.gate = gate
         cache_dir = env.get(llm_cfg.get("cache_dir_env", "")) or llm_cfg["cache_dir"]
         self.cache = cache or LlmCache(Path(cache_dir) if Path(cache_dir).is_absolute() else root / cache_dir,
                                        write=llm_cfg.get("cache_write", True))
@@ -103,6 +114,7 @@ class LlmClient:
         self.warnings = []
         self._sleep, self._clock = sleep, clock
         self._last_call = None
+        self._started = clock()
 
     @property
     def has_key(self) -> bool:
@@ -194,6 +206,15 @@ class LlmClient:
                 break
             if not self._check_daily_limit():
                 break
+            max_seconds = self.cfg.get("max_run_seconds")
+            if max_seconds and self._clock() - self._started >= max_seconds:
+                self.stop_reason = f"достигнут лимит времени на один прогон ({max_seconds:g} с)"
+                break
+            if self.gate is not None:
+                reason = self.gate()
+                if reason:
+                    self.stop_reason = self._scrub(reason)
+                    break
             self._pause_between_calls()
             self.stats.calls += 1
             self.usage.add(self.model)
