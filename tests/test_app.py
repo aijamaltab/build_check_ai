@@ -144,7 +144,8 @@ def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
     assert "<th>Название в ВОР</th>" in html and "<th>Итог</th>" in html and html.count('class="chain"') == 1
     assert html.count("✓ принято") + html.count("✕ отклонено") == 6
     assert "ИИ ошибается реже, чем помогает, но ошибки бывают. Мы показываем их открыто" in html
-    assert "Что мы меняем:" in html and "будут помечаться как требующие проверки, а не как уверенное расхождение" in html and "ещё не сделано" in html
+    assert "Что изменено:" in html and "ИИ не подтвердил совпадение, нужна проверка" in html and "Если кандидатов не было, поведение прежнее" in html
+    assert "ещё не сделано" not in html and "будут помечаться" not in html
     assert html.count('class="err-card"') == 3 and html.count('class="err-tag">набор 3') == 2 and html.count('class="err-tag">набор 2') == 1
     for text in ("Устройство перекрытий из бетона В25", "Плиты перекрытий монолитные М350", "Снятие шифера с крыши", "LED-панели светильники монтаж",
                  "уверенность 0,85", "уверенность 0,90", "Как поймает человек"):

@@ -162,7 +162,7 @@ def main() -> int:
     parser.add_argument("--source", default=str(ROOT / "data" / "synthetic"))
     parser.add_argument("--gt", default=str(ROOT / "data" / "ground_truth.csv"))
     parser.add_argument("--traps", default=str(ROOT / "data" / "traps.csv"))
-    parser.add_argument("--set", default=None, choices=["set_2", "set_3"],
+    parser.add_argument("--set", default=None, choices=["set_2", "set_3", "set_4"],
                         help="дополнительный набор data/synthetic_sets/<набор>: файлы, эталон и ловушки берутся оттуда")
     parser.add_argument("--ai-ceiling", action="store_true",
                         help="режим synonyms_llm с фейковыми судьями по эталону генератора (потолок, не оценка модели)")

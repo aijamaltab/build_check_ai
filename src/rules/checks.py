@@ -185,6 +185,7 @@ def run_checks(conn, cfg: dict, project_id: str, mode: str = "rules_only") -> Ch
 
     # ---- (в) позиция в акте без пары в ВОР: только absent ----
     mv = rules["issues"]["missing_in_vor"]
+    cr = mv.get("candidates_rule", {})
     min_conf = rules["llm"]["min_confidence"]
     for g in data.groups("g.doc_type = 'act' AND g.status = 'absent'"):
         rows = [r for r in data.rows(g["group_id"]) if r["counted"]]
@@ -197,11 +198,18 @@ def run_checks(conn, cfg: dict, project_id: str, mode: str = "rules_only") -> Ch
         impact = sum(a for a in amounts if a is not None) if same_currency and any(a is not None for a in amounts) else None
         unit = labels.get(g["unit_norm"], g["unit_norm"] or "")
         text = texts["missing_in_vor"].format(name=g["work_name_raw"], actual=fmt(g["qty_sum"]), unit=unit)
-        note = mv["confirmed_note"] if confirmed else mv["low_confidence_note"]
-        if not confirmed and mode == "rules_only":
+        # асимметричное доверие: у строки были кандидаты правил до вызова ИИ, значит отрицательный ответ ИИ («разные», «в ВОР нет»)
+        # не доказывает отсутствия пары; расхождение остаётся низкой уверенности с пометкой. Без кандидатов поведение прежнее.
+        had_candidates = mode == "llm" and cr.get("enabled", False) and conn.execute(
+            "SELECT 1 FROM staging_match_candidates WHERE group_id = ? AND score >= ?", (g["group_id"], cr["min_candidate_score"])).fetchone() is not None
+        if had_candidates:
+            confirmed, note, severity = False, cr["note"], cr["severity"]
+        else:
+            note = mv["confirmed_note"] if confirmed else mv["low_confidence_note"]
+            severity = mv["severity_confirmed"] if confirmed else mv["severity_unconfirmed"]
+        if not confirmed and not had_candidates and mode == "rules_only":
             note += " " + rules["matching"]["rules_only_explanation"] + "."
-        _add_issue(conn, project_id, mode, "missing_in_vor", g["final_work_key"], 0, g["qty_sum"], g["qty_sum"], None,
-                   mv["severity_confirmed"] if confirmed else mv["severity_unconfirmed"],
+        _add_issue(conn, project_id, mode, "missing_in_vor", g["final_work_key"], 0, g["qty_sum"], g["qty_sum"], None, severity,
                    (g["source_file"], g["source_sheet"], g["source_row"]), text + " " + note, impact,
                    None if impact is not None else rules["issues"]["no_estimate_price_note"],
                    confidence="high" if confirmed else "low", review_note=note, unit=unit)

@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import generate_synthetic as gen  # noqa: E402
 from synthetic_profiles import PROFILES, set_dir  # noqa: E402
 
-SETS = ["set_2", "set_3"]
+SETS = ["set_2", "set_3", "set_4"]
 XLSX = ["vor_1", "vor_2", "estimate", "contract", "act_1", "act_2", "act_3", "act_4", "act_5"]
 
 
@@ -76,10 +76,23 @@ def test_set_passes_ingestion_without_errors(name, tmp_path):
 
 
 def test_sets_use_other_names_objects_and_seeds_than_the_base_set():
-    base, s2, s3 = variants(None), variants(PROFILES["set_2"]), variants(PROFILES["set_3"])
-    assert not base & s2 and not base & s3 and not s2 & s3                                            # ни одного общего названия работы
-    assert len({PROFILES[n]["seed"] for n in SETS} | {gen.DEFAULT_SEED}) == 3
-    assert PROFILES["set_2"]["object"] != PROFILES["set_3"]["object"] and "СШ № 99" not in str(PROFILES["set_2"]["object"])
+    names = {"base": variants(None), **{n: variants(PROFILES[n]) for n in SETS}}
+    keys = list(names)
+    for i, x in enumerate(keys):
+        for y in keys[i + 1:]:
+            assert not names[x] & names[y], (x, y)                                                   # ни одного общего названия работы
+    assert len({PROFILES[n]["seed"] for n in SETS} | {gen.DEFAULT_SEED}) == len(SETS) + 1
+    assert len({str(PROFILES[n]["object"]) for n in SETS}) == len(SETS) and "СШ № 99" not in str([PROFILES[n]["object"] for n in SETS])
+
+
+@pytest.mark.parametrize("name", SETS)
+def test_trap_3_description_names_the_real_act_wording(name):
+    import re
+    with open(set_dir(name) / "traps.csv", encoding="utf-8", newline="") as f:
+        text = next(r["description"] for r in csv.DictReader(f) if r["trap_id"] == "3")
+    act_name = re.search(r"в акте «([^»]+)»", text).group(1)
+    acts = " ".join(str(v) for n in ("act_1", "act_2") for row in cells(set_dir(name) / f"{n}.xlsx") for v in row if v)
+    assert act_name in acts                                                                           # описание ловушки совпадает с данными
 
 
 @pytest.mark.parametrize("name", SETS)

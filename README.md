@@ -105,7 +105,7 @@ streamlit run app.py
 
 ### Дополнительные наборы синтетики
 
-`data/synthetic_sets/set_2` (капремонт детского сада) и `set_3` (капремонт амбулатории): те же девять файлов и 12 заложенных расхождений, но другие объект, seed и названия работ (`scripts/synthetic_profiles.py`). Генерация: `python scripts/generate_synthetic.py --set set_2`. Оценка: `python scripts/evaluate.py --set set_2 --gemini-cache`. Заполнить кэш ИИ по набору (нужен ключ, запускает человек): `python scripts/run_llm.py --set set_2`. На странице загрузки наборы можно скачать zip-архивом или сверить кнопкой.
+`data/synthetic_sets/set_2` (капремонт детского сада), `set_3` (амбулатория) и `set_4` (дом культуры, пока без кэша ИИ): те же девять файлов и 12 заложенных расхождений, но другие объект, seed и названия работ (`scripts/synthetic_profiles.py`). Генерация: `python scripts/generate_synthetic.py --set set_2`. Оценка: `python scripts/evaluate.py --set set_2 --gemini-cache`. Заполнить кэш ИИ по набору (нужен ключ, запускает человек): `python scripts/run_llm.py --set set_2`. На странице загрузки наборы можно скачать zip-архивом или сверить кнопкой.
 
 ---
 

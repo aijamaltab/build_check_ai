@@ -31,7 +31,7 @@ def main(argv=None) -> int:
     llm = cfg["rules"]["llm"]
     parser = argparse.ArgumentParser(description="Прогон data/synthetic в режиме llm (настоящий Gemini + кэш)")
     parser.add_argument("--source", default=str(ROOT / "data" / "synthetic"))
-    parser.add_argument("--set", default=None, choices=["set_2", "set_3"],
+    parser.add_argument("--set", default=None, choices=["set_2", "set_3", "set_4"],
                         help="дополнительный набор data/synthetic_sets/<набор> вместо data/synthetic (база data/cache/<набор>.db, кэш общий)")
     parser.add_argument("--db", default=None, help="по умолчанию data/cache/demo.db (для набора data/cache/<набор>.db)")
     parser.add_argument("--cache-only", action="store_true", help="только кэш, без вызовов API и без ключа")

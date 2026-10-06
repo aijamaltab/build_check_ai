@@ -237,7 +237,7 @@ def synth(tmp_path_factory):
     return out
 
 
-def test_pipeline_confident_null_makes_missing_in_vor_high_confidence(synth, tmp_path):
+def test_pipeline_confident_null_makes_missing_in_vor_high_confidence_only_without_candidates(synth, tmp_path):
     def all_null(prompt):
         n = len(re.findall(r"^R\d+\.", prompt, re.M))
         return reply(*[item(i, None, 0.95, "в ВОР нет") for i in range(1, n + 1)])
@@ -248,8 +248,12 @@ def test_pipeline_confident_null_makes_missing_in_vor_high_confidence(synth, tmp
     assert s["ai"]["calls"] == len(transport.prompts) >= 2                      # пачки по row_batch_size
     import sqlite3
     conn = sqlite3.connect(tmp_path / "p.db")
-    rows = conn.execute("SELECT confidence FROM issues_view WHERE issue_type = 'missing_in_vor'").fetchall()
-    assert rows and all(r[0] == "high" for r in rows)
+    rows = conn.execute(
+        "SELECT i.confidence, EXISTS(SELECT 1 FROM staging_match_candidates c JOIN staging_match_rows r ON r.group_id = c.group_id "
+        "JOIN items it ON it.item_id = r.item_id WHERE it.source_file = i.source_file AND it.source_row = i.source_row) "
+        "FROM issues_view i WHERE i.issue_type = 'missing_in_vor'").fetchall()
+    # асимметричное доверие (rules.yaml, issues.missing_in_vor.candidates_rule): уверенное «нет» даёт high только там, где у правил кандидатов не было
+    assert rows and any(r[1] == 0 for r in rows) and all((r[0] == "high") == (r[1] == 0) for r in rows)
 
 
 def test_pipeline_without_key_and_cache_still_falls_back(synth, tmp_path):
