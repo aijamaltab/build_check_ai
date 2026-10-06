@@ -1,0 +1,19 @@
+{
+  "answer": {
+    "confidence": 0.9,
+    "key": "material:светильники панельные светодиодные|pcs",
+    "reason": "Наименования соответствуют светодиодным панельным светильникам, единица измерения совпадает."
+  },
+  "created_at": "2026-10-06T22:48:31",
+  "function": "row",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "row": [
+      "светильники панельные led",
+      "pcs",
+      "-"
+    ],
+    "vor": "9afc26b2354a5ab1e39cd3dda424f159951a720684255a8edea40d4a5c574326"
+  },
+  "prompt_version": "row-v1"
+}

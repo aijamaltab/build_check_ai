@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 0.95,
+    "reason": "одинаковый класс арматуры и диаметр, различия в записи не меняют суть",
+    "same_work": true
+  },
+  "created_at": "2026-10-06T22:34:04",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "арматура а500 ф12",
+      "t",
+      "-"
+    ],
+    "b": [
+      "арматура а500с диаметром 12 мм",
+      "t",
+      "work"
+    ]
+  },
+  "prompt_version": "pair-v3"
+}

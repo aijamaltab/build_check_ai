@@ -153,7 +153,7 @@ def render() -> None:
     with st.expander("Как подготовить файлы", expanded=False):
         st.write(f"""
         1. **ВОР (ведомость объёмов работ):** обязательно, один или несколько файлов.
-        2. **Смета:** необязательно, нужна для сверки цен за единицу.
+        2. **Смета:** необязательно, один или несколько файлов, нужна для сверки цен за единицу.
         3. **Договор:** необязательно, нужен для проверки срока выполнения работ.
         4. **Акты выполненных работ:** обязательно, один или несколько файлов.
         5. **Формат и размер:** только Excel (.xlsx), не больше {MAX_FILE_MB} МБ на файл, не больше {MAX_FILES} файлов за один раз.
@@ -165,7 +165,8 @@ def render() -> None:
         vor_files = st.file_uploader("ВОР (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="upload_vor",
                                      help="Один или несколько файлов ведомости объёмов работ (обязательно)")
     with col2:
-        estimate_file = st.file_uploader("Смета (.xlsx, необязательно)", type=["xlsx"], key="upload_estimate", help="Смета в текущих ценах")
+        estimate_files = st.file_uploader("Смета (.xlsx, необязательно)", type=["xlsx"], accept_multiple_files=True, key="upload_estimate",
+                                          help="Один или несколько файлов сметы в текущих ценах")
         contract_file = st.file_uploader("Договор (.xlsx, необязательно)", type=["xlsx"], key="upload_contract",
                                          help="Договор с указанием срока и общей суммы")
     with col3:
@@ -173,7 +174,7 @@ def render() -> None:
                                      help="Один или несколько актов выполненных работ (обязательно)")
 
     if st.button("Сверить", type="primary"):
-        chosen = [*vor_files, *([estimate_file] if estimate_file else []), *([contract_file] if contract_file else []), *act_files]
+        chosen = [*vor_files, *estimate_files, *([contract_file] if contract_file else []), *act_files]
         if not vor_files and not act_files:
             st.error("Пожалуйста, загрузите ведомость объёмов работ (ВОР) и хотя бы один акт выполненных работ.")
         elif not vor_files:

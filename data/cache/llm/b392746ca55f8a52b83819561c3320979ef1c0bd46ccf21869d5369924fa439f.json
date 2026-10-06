@@ -1,0 +1,19 @@
+{
+  "answer": {
+    "confidence": 0.95,
+    "key": "work:прокладка кабеля ввг нг 3х2.5 по стенам|m",
+    "reason": "Прокладка кабеля ВВГнг-LS 3х2,5 соответствует позиции K36"
+  },
+  "created_at": "2026-10-06T22:39:17",
+  "function": "row",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "row": [
+      "кабель ввгнг-ls 3×2,5 прокладка",
+      "m",
+      "-"
+    ],
+    "vor": "04fe21ab50df61805b250d65da0667e0ab4de44a9b092350b31d3a3f2727c5da"
+  },
+  "prompt_version": "row-v1"
+}

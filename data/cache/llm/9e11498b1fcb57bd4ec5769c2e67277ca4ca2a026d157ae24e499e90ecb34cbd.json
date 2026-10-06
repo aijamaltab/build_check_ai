@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 0.9,
+    "reason": "первая строка описывает материал, вторая - работу по его монтажу",
+    "same_work": false
+  },
+  "created_at": "2026-10-06T22:42:46",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "светильники панельные led",
+      "pcs",
+      "-"
+    ],
+    "b": [
+      "led-панели светильники монтаж",
+      "pcs",
+      "work"
+    ]
+  },
+  "prompt_version": "pair-v3"
+}

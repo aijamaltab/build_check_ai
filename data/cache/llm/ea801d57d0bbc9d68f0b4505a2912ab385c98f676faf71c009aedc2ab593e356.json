@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 0.95,
+    "reason": "А240 соответствует гладкой арматуре, диаметр совпадает",
+    "same_work": true
+  },
+  "created_at": "2026-10-06T22:38:37",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "арматура гладкая ф8",
+      "t",
+      "-"
+    ],
+    "b": [
+      "арматура а240 диаметром 8 мм /прим/",
+      "t",
+      "work"
+    ]
+  },
+  "prompt_version": "pair-v3"
+}

@@ -1,0 +1,19 @@
+{
+  "answer": {
+    "confidence": 0.85,
+    "key": "work:снятие межкомнатных дверей|pcs",
+    "reason": "Соответствует снятию дверных блоков"
+  },
+  "created_at": "2026-10-06T22:48:46",
+  "function": "row",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "row": [
+      "демонтаж внутренних дверных блоков",
+      "pcs",
+      "-"
+    ],
+    "vor": "9afc26b2354a5ab1e39cd3dda424f159951a720684255a8edea40d4a5c574326"
+  },
+  "prompt_version": "row-v1"
+}

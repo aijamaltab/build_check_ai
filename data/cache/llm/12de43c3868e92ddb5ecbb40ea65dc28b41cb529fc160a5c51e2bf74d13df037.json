@@ -1,0 +1,19 @@
+{
+  "answer": {
+    "confidence": 0.8,
+    "key": "work:монтаж электроустановочной арматуры|pcs",
+    "reason": "Розетки и выключатели относятся к электроустановочной арматуре"
+  },
+  "created_at": "2026-10-06T22:39:17",
+  "function": "row",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "row": [
+      "розетки и выключатели",
+      "pcs",
+      "-"
+    ],
+    "vor": "04fe21ab50df61805b250d65da0667e0ab4de44a9b092350b31d3a3f2727c5da"
+  },
+  "prompt_version": "row-v1"
+}

@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 0.9,
+    "reason": "демонтаж дверных полотен с коробками и снятие дверей описывают одну и ту же операцию",
+    "same_work": true
+  },
+  "created_at": "2026-10-06T22:38:01",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "демонтаж дверных полотен с коробками",
+      "pcs",
+      "-"
+    ],
+    "b": [
+      "снятие дверей",
+      "pcs",
+      "work"
+    ]
+  },
+  "prompt_version": "pair-v3"
+}

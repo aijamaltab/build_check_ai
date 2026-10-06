@@ -1,0 +1,23 @@
+{
+  "answer": {
+    "confidence": 0.85,
+    "reason": "разные маркировки кабеля: наличие индекса LS указывает на иные характеристики пожарной безопасности",
+    "same_work": false
+  },
+  "created_at": "2026-10-06T23:55:47",
+  "function": "pair",
+  "model": "gemini-3.1-flash-lite",
+  "payload": {
+    "a": [
+      "кабель ввгнг 3х2,5 в бухтах",
+      "m",
+      "-"
+    ],
+    "b": [
+      "кабель ввгнг(a)-ls 3х2,5",
+      "m",
+      "material"
+    ]
+  },
+  "prompt_version": "pair-v3"
+}
