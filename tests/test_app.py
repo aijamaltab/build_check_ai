@@ -143,7 +143,13 @@ def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
         assert text in html
     assert "<th>Название в ВОР</th>" in html and "<th>Итог</th>" in html and html.count('class="chain"') == 1
     assert html.count("✓ принято") + html.count("✕ отклонено") == 6
-    assert "Разборка пола" in html and "уверенность 0,90" in html and "Человек ловит это при проверке" in html
+    assert "ИИ ошибается реже, чем помогает, но ошибки бывают. Мы показываем их открыто" in html
+    assert "Что мы меняем:" in html and "будут помечаться как требующие проверки, а не как уверенное расхождение" in html and "ещё не сделано" in html
+    assert html.count('class="err-card"') == 3 and html.count('class="err-tag">набор 3') == 2 and html.count('class="err-tag">набор 2') == 1
+    for text in ("Устройство перекрытий из бетона В25", "Плиты перекрытий монолитные М350", "Снятие шифера с крыши", "LED-панели светильники монтаж",
+                 "уверенность 0,85", "уверенность 0,90", "Как поймает человек"):
+        assert text in html
+    assert 'class="errbox"' not in html
     assert "Без ИИ найдено 8 из 12 заложенных расхождений и 10 ложных. С ИИ найдено 12 из 12 и 1 ложное" in html
     assert [t.label for t in at.tabs] == ["Без ИИ (18)", "С ИИ (13)"]
     assert html.count('class="plain"') == 3 and html.count('class="row-false"') == 11             # таблицы с переносом текста; ложные: 10 без ИИ и 1 с ИИ

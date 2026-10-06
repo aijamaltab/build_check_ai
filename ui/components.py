@@ -289,3 +289,14 @@ def html_table(frame: pd.DataFrame, mark_false: bool = False) -> str:
         cells = "".join(f'<td data-label="{escape(str(h))}">{escape(str(r[h]))}</td>' for h in heads)
         rows += f'<tr class="{"row-false" if bad else ""}">{cells}</tr>'
     return f'<table class="plain"><thead><tr>{thead}</tr></thead><tbody>{rows}</tbody></table>'
+
+
+def errors_html(examples: list) -> str:
+    """Блок «Где ИИ ошибается»: спокойные карточки-примеры (набор, ВОР, акт, ответ ИИ, что вышло, как поймает человек)."""
+    cards = ""
+    for e in examples:
+        rows = "".join(f'<div class="err-row"><span class="err-label">{escape(label)}</span><span>{escape(e[key])}</span></div>'
+                       for label, key in (("В ВОР", "vor"), ("В акте", "act"), ("Ответ ИИ", "ai"), ("Что вышло", "result"), ("Как поймает человек", "human")))
+        cards += (f'<div class="err-card"><div class="err-head"><span class="err-tag">{escape(e["set"])}</span>'
+                  f'<span class="err-title">{escape(e["title"])}</span></div>{rows}</div>')
+    return f'<div class="err-grid">{cards}</div>'
