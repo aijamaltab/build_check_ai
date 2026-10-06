@@ -6,7 +6,8 @@ import json
 
 from ui.data import STATUS_COLORS
 
-COLUMN_TITLES = ["№", "Наименование (по ВОР)", "Ед.", "ВОР, кол-во", "Акты, кол-во", "Выполнено, %", "Цена по смете", "Цена по акту", "Δ цены, %", "Статус"]
+COLUMN_TITLES = ["№", "Статус", "Наименование (по ВОР)", "Ед.", "ВОР, кол-во", "Акты, кол-во", "Выполнено, %", "Цена по смете", "Цена по акту (средняя)", "Δ цены, %"]
+HINTS = {"actp": "Средневзвешенная по количеству, если актов несколько"}
 HEIGHT = 900
 
 TEMPLATE = r"""<!doctype html>
@@ -29,10 +30,18 @@ body { padding: 2px 1px 12px 1px; }
 .count { margin-left:auto; color:var(--muted); font-size:13px; }
 .wrap { max-height:430px; overflow:auto; }
 table { border-collapse:separate; border-spacing:0; width:100%; min-width:840px; }
-th { position:sticky; top:0; z-index:2; background:#EEF2F6; font-weight:600; text-align:left; padding:0 8px; height:36px; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px; }
+th { position:sticky; top:0; z-index:2; background:#EEF2F6; font-weight:600; text-align:left; padding:0 8px; height:40px; border-bottom:1px solid var(--line); white-space:nowrap; font-size:13px; }
 td { height:34px; padding:0 8px; border-bottom:1px solid #E8ECF1; white-space:nowrap; background:#fff; }
 th.num, td.num { text-align:right; }
-td.name { white-space:normal; min-width:200px; max-width:300px; line-height:1.25; }
+td.c-name, th.c-name { white-space:normal; line-height:1.2; overflow-wrap:anywhere; }
+.c-n, .c-status, .c-name { position:sticky; background:#fff; }
+th.c-n, th.c-status, th.c-name { background:#EEF2F6; z-index:4; }
+td.c-n, td.c-status, td.c-name { z-index:1; }
+.c-n { left:0; width:40px; min-width:40px; max-width:40px; }
+.c-status { left:40px; width:112px; min-width:112px; max-width:112px; }
+.c-name { left:152px; width:190px; min-width:190px; max-width:190px; box-shadow:2px 0 0 #D8DEE6; }
+td.c-name.hl-red { box-shadow: inset 0 0 0 1px #E8B4AF, 2px 0 0 #D8DEE6; }
+.hint { color:var(--accent); cursor:help; font-weight:400; }
 tr { cursor:pointer; }
 tr:hover td { background:#F7F9FB; }
 tr.sel td { background:var(--accent-soft); }
@@ -60,7 +69,7 @@ td[data-tip] { cursor:help; }
 .empty { color:var(--muted); }
 .docs { margin-top:8px; padding:10px 14px; }
 .docs .row { padding:3px 0; overflow-wrap:anywhere; }
-@media (max-width: 640px) { .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
+@media (max-width: 640px) { .c-n { width:32px; min-width:32px; max-width:32px; } .c-status { left:32px; width:100px; min-width:100px; max-width:100px; } .c-name { left:132px; width:120px; min-width:120px; max-width:120px; font-size:12px; } .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
 </style></head><body>
 <div class="panel toolbar" role="search">
   <input id="q" type="search" placeholder="Поиск по названию" aria-label="Поиск по названию">
@@ -81,14 +90,14 @@ td[data-tip] { cursor:help; }
 (function () {
   var D = JSON.parse(document.getElementById('ledger-data').textContent);
   var P = D.palette, T = D.titles;
-  var KEYS = ['n','name','unit','plan','fact','pct','est','actp','dp','status'];
+  var KEYS = ['n','status','name','unit','plan','fact','pct','est','actp','dp'];
   var NUM = {plan:1,fact:1,pct:1,est:1,actp:1,dp:1};
   var CHIPS = [['red','Красные'],['yellow','Жёлтые'],['green','Зелёные']];
   var S = {q:'', stat:{}, dev:false, iss:false, unit:'', sel:null, pin:null};
   var $ = function (id) { return document.getElementById(id); };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
-  $('head').innerHTML = KEYS.map(function (k, i) { return '<th class="' + (NUM[k] ? 'num' : '') + '">' + esc(T[i]) + '</th>'; }).join('');
+  $('head').innerHTML = KEYS.map(function (k, i) { return '<th class="c-' + k + ' ' + (NUM[k] ? 'num' : '') + '">' + esc(T[i]) + (D.hints[k] ? ' <span class="hint" tabindex="0" role="button" aria-label="' + esc(D.hints[k]) + '" data-hint="' + k + '">ⓘ</span>' : '') + '</th>'; }).join('');
   $('chips').innerHTML = CHIPS.map(function (c) {
     return '<button type="button" class="chip" data-s="' + c[0] + '" aria-pressed="false"><span class="dot" style="background:' + P[c[0]] + '"></span>' + c[1] + '</button>';
   }).join('');
@@ -111,7 +120,7 @@ td[data-tip] { cursor:help; }
   }
   function cell(r, k) {
     var hl = r.hl[k], tip = r.tips[k];
-    var cls = (NUM[k] ? 'num ' : '') + (k === 'name' ? 'name ' : '') + (hl ? 'hl-' + hl : '');
+    var cls = 'c-' + k + ' ' + (NUM[k] ? 'num ' : '') + (hl ? 'hl-' + hl : '');
     var attr = tip ? ' data-tip="' + k + '" tabindex="0"' : '';
     var body = k === 'status' ? status(r) : esc(r[k]);
     return '<td class="' + cls + '"' + attr + '>' + body + '</td>';
@@ -171,6 +180,14 @@ td[data-tip] { cursor:help; }
     if (scroll) $('details').scrollIntoView({block: 'nearest', behavior: 'smooth'});
   }
 
+  function showHint(el) {
+    var t = $('tip'); t.innerHTML = '<div>' + esc(D.hints[el.getAttribute('data-hint')]) + '</div>'; t.style.display = 'block';
+    var b = el.getBoundingClientRect();
+    t.style.left = Math.max(6, Math.min(b.left, window.innerWidth - t.offsetWidth - 6)) + 'px'; t.style.top = (b.bottom + 4) + 'px'; S.shownAt = Date.now();
+  }
+  $('head').addEventListener('mouseover', function (e) { var h = e.target.closest('.hint'); if (h) showHint(h); });
+  $('head').addEventListener('mouseout', function (e) { if (e.target.closest('.hint') && !S.pin) hideTip(); });
+  $('head').addEventListener('click', function (e) { var h = e.target.closest('.hint'); if (h) { e.stopPropagation(); showHint(h); } });
   var body = $('body');
   body.addEventListener('mouseover', function (e) { var td = e.target.closest('td[data-tip]'); if (td && !S.pin) showTip(td, false); });
   body.addEventListener('mouseout', function (e) { var td = e.target.closest('td[data-tip]'); if (td && !S.pin) hideTip(); });
@@ -209,7 +226,7 @@ td[data-tip] { cursor:help; }
 
 def ledger_html(ledger: dict) -> str:
     """Готовая страница таблицы. Данные в JSON; «</» экранируется, чтобы текст из файлов не закрыл тег script."""
-    payload = {**ledger, "palette": {k: v[0] for k, v in STATUS_COLORS.items()}, "titles": COLUMN_TITLES}
+    payload = {**ledger, "palette": {k: v[0] for k, v in STATUS_COLORS.items()}, "titles": COLUMN_TITLES, "hints": HINTS}
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
     return TEMPLATE.replace("__DATA__", data)
 

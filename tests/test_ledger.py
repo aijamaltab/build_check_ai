@@ -112,3 +112,19 @@ def test_status_colors_and_contrast():
 
 def test_run_date_format():
     assert fmt_run_at("2026-10-06T19:04:39") == "06.10.2026 19:04" and fmt_run_at(None) == "—"
+
+
+def test_column_order_pinned_columns_and_price_hint(ledger):
+    assert COLUMN_TITLES[:3] == ["№", "Статус", "Наименование (по ВОР)"] and "Цена по акту (средняя)" in COLUMN_TITLES
+    assert "Цена по акту" not in [t for t in COLUMN_TITLES if t != "Цена по акту (средняя)"]
+    html = ledger_html(ledger)
+    assert "var KEYS = ['n','status','name'" in html
+    assert "Средневзвешенная по количеству, если актов несколько" in html
+    for col in (".c-n", ".c-status", ".c-name"):                          # колонки закреплены слева
+        assert col in html
+    assert "position:sticky; background:#fff" in html
+
+
+def test_sidebar_is_collapsed_by_default():
+    from pathlib import Path as P
+    assert 'initial_sidebar_state="collapsed"' in (P(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")

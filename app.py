@@ -10,7 +10,7 @@ from ui.loader import build_demo  # noqa: E402
 from ui.screens import demo, rationale, results, upload  # noqa: E402
 from ui.styles import inject  # noqa: E402
 
-st.set_page_config(page_title="Сверка строительных документов", layout="wide", initial_sidebar_state="auto")
+st.set_page_config(page_title="Сверка строительных документов", layout="wide", initial_sidebar_state="collapsed")
 inject()
 
 # страницы ссылаются друг на друга, поэтому сначала создаются все st.Page, обёртки берут их из замыкания
