@@ -22,9 +22,7 @@ XLSX = ["vor_1", "vor_2", "estimate", "contract", "act_1", "act_2", "act_3", "ac
 def norm(path) -> bytes:
     """Байты файла; у CSV переводы строк приводятся к LF (git на Windows может подставить CRLF при checkout)."""
     data = Path(path).read_bytes()
-    return data.replace(b"
-", b"
-") if str(path).endswith(".csv") else data
+    return data.replace(bytes([13, 10]), bytes([10])) if str(path).endswith(".csv") else data
 
 
 def cells(path):
