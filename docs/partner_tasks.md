@@ -41,14 +41,16 @@
 ## 3. Где что лежит
 
 ```
-app.py                  точка входа и меню страниц (st.navigation): «Демо», «Проверить свои файлы», «Сверочная ведомость», «Как работает ИИ». Айжамал; тебе можно только
+app.py                  точка входа и меню страниц (st.navigation): «Загрузка данных», «Результаты», «Исходные таблицы», «Как работает ИИ». Айжамал; тебе можно только
                         добавить свою страницу в список pages (см. правило 4)
-ui/screens/demo.py      страница «Демо» (url_path demo, не трогать)
-ui/screens/results.py   страница «Сверочная ведомость» (url_path ledger; таблица: ui/ledger.py, ui/ledger_data.py)
-ui/screens/upload.py    страница «Проверить свои файлы» (url_path upload)
+ui/runner.py            прогон сверки в отдельной папке сессии, st.session_state["run_result"] (не трогать)
+ui/screens/upload.py    страница «Загрузка данных» (url_path upload, по умолчанию): файлы и три демо-набора
+ui/screens/results.py   страница «Результаты» (url_path results): Сводка, Расхождения, Позиции (таблица: ui/ledger.py, ui/ledger_data.py)
+ui/screens/empty.py     сообщение «Загрузите данные» для страниц без результата
+ui/sheets_view.py       страница «Исходные таблицы» (url_path sheets), читает run_result; модель таблиц: ui/sheet_builder.py
 ui/screens/blocks.py    общие блоки: метрики, светофор, карточки, позиции
 ui/screens/rationale.py страница «Как работает ИИ» (url_path rationale, не трогать)
-ui/loader.py            build_demo(): сборка демо-результата один раз на режим (не трогать)
+ui/loader.py            build_demo(): общий демо-результат для страницы «Как работает ИИ» (не трогать)
 ui/data.py              чтение базы (load_results) и подготовка данных для экрана, без Streamlit (не трогать)
 ui/styles.py            CSS сайта (не трогать)
 ui/components.py        карточки, бейджи, светофор, таблица позиций (не трогать)

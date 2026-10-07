@@ -7,14 +7,13 @@
 - Интерактивные поповеры и сквозная навигация между документами (ВОР ↔ Смета ↔ Акты).
 """
 import json
-from pathlib import Path
 import streamlit as st
 
+from ui import runner
+from ui.data import fmt_num
+from ui.screens.empty import empty_state
 from ui.sheet_builder import build_sheet_audit_model
-from ui.loader import build_demo
 
-ROOT = Path(__file__).resolve().parents[1]
-DEMO_DIR = ROOT / "data" / "synthetic"
 DEFAULT_HEIGHT = 880
 
 TEMPLATE = r"""<!doctype html>
@@ -1147,8 +1146,30 @@ def render_sheets_view(model: dict, height: int = DEFAULT_HEIGHT) -> None:
     components.html(html_content, height=height, scrolling=False)
 
 
-def render() -> None:
-    """Главная точка входа для страницы в Streamlit (Edge-to-edge / Fullscreen)."""
+def project_card(run: dict) -> dict:
+    """Данные шапки-выдвижки из прогона: все числа берутся из сводки, ничего не зашито."""
+    summary = run["summary"]
+    statuses = summary.get("statuses", {})
+    return {"name": run["label"], "mode": runner.mode_label(run), "files": summary.get("files", 0), "items": summary.get("n", 0),
+            "issues": summary.get("z", 0), "impact_som": f"{fmt_num(summary.get('impact_som', 0))} сом",
+            "red": int(statuses.get("red", 0)), "yellow": int(statuses.get("yellow", 0)), "green": int(statuses.get("green", 0))}
+
+
+def sheets_model(run: dict) -> dict:
+    """Модель таблиц для прогона; строится один раз и хранится в самом прогоне (страница без виджетов перерисовывается часто)."""
+    if "sheets_model" not in run:
+        model = build_sheet_audit_model(run["files_dir"], run["db_path"], run["project_id"])
+        model["project"] = project_card(run)
+        run["sheets_model"] = model
+    return run["sheets_model"]
+
+
+def render(upload_page=None) -> None:
+    """Страница «Исходные таблицы» (Edge-to-edge / Fullscreen) по последнему прогону сессии."""
+    run = runner.current_run()
+    if run is None:
+        empty_state(upload_page, key="sheets")
+        return
     # Снимаем отступы контейнера Streamlit для полноэкранного режима
     st.markdown(
         """
@@ -1235,29 +1256,9 @@ def render() -> None:
     )
 
     try:
-        demo = build_demo("llm")
-        from pathlib import Path
-        import tempfile
-        db_path = Path(tempfile.gettempdir()) / "hackathon_ai_demo" / "demo_llm.db"
-        if not db_path.exists():
-            st.warning("База данных демо-проекта еще не построена. Перейдите на Главную страницу для запуска.")
-            return
-
-        model = build_sheet_audit_model(DEMO_DIR, db_path)
-        summary = demo.get("summary", {})
-        model["project"] = {
-            "name": "Капремонт школы",
-            "mode": "С ИИ (Gemini)" if summary.get("mode") == "llm" else "Без ИИ (базовый режим)",
-            "files": summary.get("files", 9),
-            "items": summary.get("items", 181),
-            "issues": summary.get("z", 13),
-            "impact_som": "1 378 030 сом",
-            "red": 11,
-            "yellow": 7,
-            "green": 30,
-        }
-    except Exception as ex:
-        st.error(f"Ошибка загрузки модели данных таблиц: {ex}")
+        model = sheets_model(run)
+    except Exception:  # noqa: BLE001: пользователю человеческая ошибка, подробности в логе Streamlit
+        st.error("Не удалось построить исходные таблицы по этому прогону. Загрузите данные заново.")
         return
 
     render_sheets_view(model)

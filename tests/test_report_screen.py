@@ -5,7 +5,6 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-from streamlit.testing.v1 import AppTest
 
 from tests.cache_guard import REAL_CACHE
 from ui.loader import build_demo
@@ -20,15 +19,6 @@ def llm_env(monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_CACHE_ONLY", "1")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
-
-def report_app():
-    import os
-    os.environ.setdefault("LLM_CACHE_ONLY", "1")
-    from ui.loader import build_demo
-    from ui.screens import report
-    data = build_demo("llm")
-    report.render_report(data["issues"], data["positions"])
 
 
 def test_generate_excel_report_structure(llm_env):
@@ -50,18 +40,3 @@ def test_generate_excel_report_structure(llm_env):
     assert ws_pos.max_row == 49  # 1 заголовок + 48 позиций
     headers_pos = [cell.value for cell in ws_pos[1]]
     assert headers_pos == ["№", "Работа", "Ед.", "План", "Факт", "Выполнено, %", "Статус"]
-
-
-def test_report_page_render_and_download_button(llm_env):
-    at = AppTest.from_function(report_app, default_timeout=60).run()
-    assert not at.exception
-
-    # Кнопка скачивания
-    assert len(at.download_button) >= 1
-    btn = at.download_button[0]
-    assert "Скачать отчёт в Excel" in btn.label
-
-    # Вкладки предпросмотра
-    assert len(at.tabs) == 2
-    assert "«Расхождения» (13)" in at.tabs[0].label
-    assert "«Позиции» (48)" in at.tabs[1].label

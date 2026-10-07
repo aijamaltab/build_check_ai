@@ -5,7 +5,6 @@ from src.config import load_config
 from ui import components as ui
 from ui.data import compact_rows, detail_rows, false_issue_ids, fmt_conf, fmt_num, quality_metrics, traffic_segments
 from ui.loader import build_demo
-from ui.screens.files import render_files
 
 QUALITY_NOTE = "Синтетические данные, оценка ориентировочная."
 STEPS = [("Читаем Excel", "Шаблоны ВОР, сметы, договора и актов читаются по заголовкам колонок, единицы приводятся к одному виду."),
@@ -76,25 +75,9 @@ def render() -> None:
                             f"С ИИ найдено {b['found']} из {b['gt_total']} и {b['false']} ложное: строки, у которых пара в ВОР есть, "
                             f"перестали попадать в «нет в ВОР»."))
 
-    false_without, false_with = false_issue_ids(without_ai["issues"]), false_issue_ids(with_ai["issues"])
-    ui.render(ui.section_html("Что показывает каждый режим", "В колонке «По эталону» видно, какие расхождения ложные."))
-    tab_without, tab_with = st.tabs([f"Без ИИ ({len(without_ai['issues'])})", f"С ИИ ({len(with_ai['issues'])})"])
-    with tab_without:
-        ui.render(ui.html_table(compact_rows(without_ai["issues"], without_ai["positions"], false_without), mark_false=True))
-    with tab_with:
-        ui.render(ui.html_table(compact_rows(with_ai["issues"], with_ai["positions"], false_with), mark_false=True))
-
-    ui.render(ui.section_html("Что сопоставил ИИ", "Пары названий, которые правила не склеили, а ИИ сопоставил. Код проверил единицу и числа."))
-    import pandas as pd
-    pairs = pd.DataFrame([{"Документ": {"act": "Акт", "estimate": "Смета"}.get(p["doc_type"], "Док."), "Как написано в документе": p["doc"],
-                           "Как написано в ВОР": p["vor"], "Уверенность": fmt_conf(p["confidence"]), "Причина (ответ ИИ)": p["reason"]}
-                          for p in with_ai["ai_pairs_all"]])
-    ui.render(ui.html_table(pairs))
-
     if examples:
-        ui.render(ui.section_html("Как ИИ и код делят работу", "Числа ИИ не считает. Ниже шесть примеров из сохранённых ответов ИИ."))
+        ui.render(ui.section_html("Как ИИ и код делят работу", "Числа ИИ не считает: он читает названия, код считает и проверяет."))
         ui.render(ui.roles_html(fmt_num(load_config()["rules"]["volume_exceeded"]["tolerance_pct"])))
-        ui.render(ui.chain_html(examples))
 
     ui.render(ui.section_html("Где ИИ ошибается"))
     ui.render(f'<div class="err-lead">{ERRORS_LEAD}</div>')
@@ -102,6 +85,24 @@ def render() -> None:
     ui.render(ui.errors_html(ERROR_EXAMPLES))
     ui.render('<div class="note-small">Примеры из синтетических наборов 2 и 3 (data/synthetic_sets), разбор в docs/ai_error_analysis.md. '
               'Окончательное решение всегда за специалистом.</div>')
-    with st.expander("Исходные файлы демо", expanded=False):
-        render_files(with_ai)
+    with st.expander("Подробности: расхождения по режимам, пары названий и примеры", expanded=False):
+        false_without, false_with = false_issue_ids(without_ai["issues"]), false_issue_ids(with_ai["issues"])
+        ui.render(ui.section_html("Что показывает каждый режим", "В колонке «По эталону» видно, какие расхождения ложные."))
+        tab_without, tab_with = st.tabs([f"Без ИИ ({len(without_ai['issues'])})", f"С ИИ ({len(with_ai['issues'])})"])
+        with tab_without:
+            ui.render(ui.html_table(compact_rows(without_ai["issues"], without_ai["positions"], false_without), mark_false=True))
+        with tab_with:
+            ui.render(ui.html_table(compact_rows(with_ai["issues"], with_ai["positions"], false_with), mark_false=True))
+
+        ui.render(ui.section_html("Что сопоставил ИИ", "Пары названий, которые правила не склеили, а ИИ сопоставил. Код проверил единицу и числа."))
+        import pandas as pd
+        pairs = pd.DataFrame([{"Документ": {"act": "Акт", "estimate": "Смета"}.get(p["doc_type"], "Док."), "Как написано в документе": p["doc"],
+                               "Как написано в ВОР": p["vor"], "Уверенность": fmt_conf(p["confidence"]), "Причина (ответ ИИ)": p["reason"]}
+                              for p in with_ai["ai_pairs_all"]])
+        ui.render(ui.html_table(pairs))
+
+        if examples:
+            ui.render(ui.section_html("Шесть примеров из сохранённых ответов ИИ"))
+            ui.render(ui.chain_html(examples))
+
     ui.render('<div class="app-footer">Прототип. Данные синтетические. Результат требует проверки специалистом.</div>')

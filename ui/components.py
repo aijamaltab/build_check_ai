@@ -224,6 +224,10 @@ def segmented(label: str, options: list, default: str, key: str) -> str:
 
 def topbar_html(project: str, run_at: str = "", mode: str = "") -> str:
     items = [f'<span class="topbar-item"><b>Проект:</b> {escape(project)}</span>']
+    if run_at:
+        items.append(f'<span class="topbar-item"><b>Прогон:</b> {escape(run_at)}</span>')
+    if mode:
+        items.append(f'<span class="topbar-item"><b>Режим:</b> {escape(mode)}</span>')
     return f'<div class="topbar">{"".join(items)}</div>'
 
 

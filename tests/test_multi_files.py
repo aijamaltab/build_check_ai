@@ -105,13 +105,13 @@ def upload_app():
 def test_upload_page_accepts_several_files_of_each_type(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=180).run()
     assert not at.exception
-    assert len(at.file_uploader) == 4 and at.file_uploader[0].proto.multiple_files and at.file_uploader[1].proto.multiple_files
-    assert at.file_uploader[3].proto.multiple_files and not at.file_uploader[2].proto.multiple_files   # договор один
+    multi = {u.key: u.proto.multiple_files for u in at.file_uploader}
+    assert multi == {"upload_vor": True, "upload_acts": True, "upload_estimate": True, "upload_contract": False}   # договор один
     for f in ("vor_1.xlsx", "vor_2.xlsx"):
-        at.file_uploader[0].upload(f, (DEMO / f).read_bytes())
-    at.file_uploader[3].upload("act_3.xlsx", (DEMO / "act_3.xlsx").read_bytes())
-    at.button[0].click().run()
+        at.file_uploader(key="upload_vor").upload(f, (DEMO / f).read_bytes())
+    at.file_uploader(key="upload_acts").upload("act_3.xlsx", (DEMO / "act_3.xlsx").read_bytes())
+    at.button(key="upload_run").click().run()
     assert not at.exception and not at.error
-    items = at.session_state["upload_results"]["items"]
+    items = at.session_state["run_result"]["results"]["items"]
     assert set(items[items["doc_type"] == "vor"]["source_file"]) == {"vor_1.xlsx", "vor_2.xlsx"}
-    assert at.session_state["upload_summary"]["files"] == 3
+    assert at.session_state["run_result"]["summary"]["files"] == 3

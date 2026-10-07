@@ -1,34 +1,23 @@
-"""Страница «Проверить свои файлы»: сверка пользовательских документов и готовых наборов, при наличии ключа с живым ИИ."""
-import shutil
-import tempfile
-from pathlib import Path
-
+"""Страница «Загрузка данных» (по умолчанию): свои файлы и готовые демо-наборы. Сверка идёт в отдельной папке сессии,
+результат лежит в st.session_state["run_result"], затем переход на «Результаты»."""
 import streamlit as st
 
-from src.config import load_config
-from src.llm.budget import CallBudget
-from src.pipeline import run_pipeline
 from ui import components as ui
-from ui.data import load_results
-from ui.ledger_data import summary_points
-from ui.live_ai import (MAX_FILE_MB, MAX_FILES, PRIVACY_WARNING, SESSION_LIMIT, SITE_DAILY_LIMIT, build_live_ai, describe_ai, get_api_key,
-                        scrub)
+from ui import runner
+from ui.live_ai import MAX_FILE_MB, MAX_FILES, PRIVACY_WARNING, SESSION_LIMIT, SITE_DAILY_LIMIT, get_api_key, scrub
+from ui.llm_budget import session_budget, site_budget
 from ui.screens import blocks
-from ui.screens.report import download_button
-from ui.sets import SETS, set_files, zip_bytes
+from ui.sets import SETS, zip_bytes
 
-HERO_TITLE = "Проверить свои файлы"
-HERO_LEAD = "Загрузите ВОР, смету, договор и акты в формате Excel (.xlsx): система сопоставит их и покажет возможные расхождения."
+HERO_TITLE = "Загрузка данных"
+HERO_LEAD = ("Загрузите ВОР, смету, договор и акты в формате Excel (.xlsx) или выберите готовый демо-набор: "
+             "система сопоставит документы и покажет возможные расхождения.")
 LIVE_INFO = ("Новые названия, для которых нет сохранённого ответа, разбирает ИИ в реальном времени. "
              f"Лимиты: до {SESSION_LIMIT} запросов на сессию, до {SITE_DAILY_LIMIT} в сутки на весь сайт, не дольше 90 секунд на прогон.")
 OFFLINE_INFO = ("Ключ ИИ на этом сайте не настроен: используются только сохранённые ответы ИИ. "
                 "Для новых названий ответов нет, такие строки не сопоставлены, позиции могут быть показаны неверно и требуют проверки.")
-
-
-@st.cache_resource
-def site_budget() -> CallBudget:
-    """Общий суточный счётчик живых запросов: один на процесс, то есть на всех посетителей."""
-    return CallBudget(SITE_DAILY_LIMIT, daily=True)
+NOT_RECOGNIZED = ("Загруженные файлы не были распознаны. Убедитесь, что они сохранены в формате .xlsx и содержат строки заголовков "
+                  "с наименованием, единицей измерения и количеством.")
 
 
 @st.cache_data(show_spinner=False)
@@ -44,12 +33,6 @@ def api_key() -> str | None:
     return get_api_key(secrets)
 
 
-def session_budget() -> CallBudget:
-    if "live_budget" not in st.session_state:               # в session_state только счётчик, ключа там нет
-        st.session_state["live_budget"] = CallBudget(SESSION_LIMIT)
-    return st.session_state["live_budget"]
-
-
 def file_problems(files: list) -> list:
     """Сообщения о числе файлов, не .xlsx и больше лимита (st.file_uploader размер сам не ограничивает)."""
     out = []
@@ -63,85 +46,59 @@ def file_problems(files: list) -> list:
     return out
 
 
-def run_reconciliation(source: Path, label: str) -> None:
-    """Сверка папки. База лежит во временной папке, она удаляется после обработки.
-    Прогресс настоящий: счётчики приходят из судей по мере разбора пар и строк."""
-    key = api_key()
-    cfg = load_config()
+def go_results(results_page) -> None:
+    """Переход на «Результаты»; без навигации (страница запущена отдельно, например в тесте) просто обновляет страницу."""
+    if results_page is not None:
+        st.switch_page(results_page)
+    st.rerun()
+
+
+def run_with_progress(label: str, results_page, *, files=None, set_name=None) -> None:
+    """Сверка с настоящим прогрессом (счётчики приходят из судей). Успех: переход на «Результаты»; ошибка или нераспознанные файлы: сообщение здесь."""
+    key = api_key() if files is not None else None          # ключ только для своих файлов; демо-наборы идут из кэша
     bar = st.progress(0.0, text="Читаем файлы и сопоставляем названия…")
     status = st.empty()
-    labels = {"pairs": "пар названий", "rows": "строк без пары"}
+    names = {"pairs": "пар названий", "rows": "строк без пары"}
 
     def progress(stage, done, total):
-        bar.progress(min(1.0, done / total) if total else 1.0, text=f"Разобрано {done} из {total} {labels[stage]}")
-        status.markdown(f"Разобрано {done} из {total} {labels[stage]}")
+        bar.progress(min(1.0, done / total) if total else 1.0, text=f"Разобрано {done} из {total} {names[stage]}")
+        status.markdown(f"Разобрано {done} из {total} {names[stage]}")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="buildcheck_upload_"))
+    run = None
     try:
-        judge, row_matcher, live = build_live_ai(cfg, key, session_budget(), site_budget(), progress)
-        summary = run_pipeline(str(source), tmp_dir / "upload.db", mode="llm", judge=judge, row_matcher=row_matcher, project_id="upload", cfg=cfg)
-        results = load_results(tmp_dir / "upload.db", project_id="upload")
-        results["n_files"] = summary["files"]
-        st.session_state.update(upload_results=results, upload_summary=summary, upload_live=live, upload_label=label)
+        if files is not None:
+            run = runner.execute(None, label, files=files, key=key, session=session_budget(), site=site_budget(), progress=progress)
+        else:
+            run = runner.execute_set(set_name, label, progress=progress)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Не удалось выполнить сверку документов: {scrub(exc, key)}. Проверьте формат файлов и структуру таблиц.")
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
         bar.empty()
         status.empty()
-
-
-def run_uploaded(files: list) -> None:
-    """Копирует загруженные файлы во временную папку, сверяет и удаляет её."""
-    folder = Path(tempfile.mkdtemp(prefix="buildcheck_files_"))
-    try:
-        for f in files:
-            (folder / Path(f.name).name).write_bytes(f.getbuffer())
-        run_reconciliation(folder, "загруженные файлы")
-    finally:
-        shutil.rmtree(folder, ignore_errors=True)
-
-
-def sets_block() -> None:
-    ui.render(ui.section_html("Готовые наборы для проверки", "Синтетические данные. Девять файлов в каждом наборе, названия работ в них системе не знакомы."))
-    for name, title in SETS.items():
-        files = set_files(name)
-        if not files:
-            continue
-        c1, c2, c3 = st.columns([3, 2, 2])
-        c1.markdown(f"**{title}**")
-        c2.download_button("Скачать набор (zip)", cached_zip(name), file_name=f"{name}.zip", mime="application/zip", key=f"zip_{name}")
-        if c3.button("Сверить этот набор", key=f"run_{name}"):
-            run_reconciliation(files[0].parent, title)
-
-
-def show_result(results: dict, summary: dict, live: bool = False) -> None:
-    if not summary or summary.get("files", 0) == 0 or results.get("files", None) is None or results["files"].empty:
-        st.error("Загруженные файлы не были распознаны. Убедитесь, что они сохранены в формате .xlsx и содержат строки заголовков "
-                 "с наименованием, единицей измерения и количеством.")
-        if summary and summary.get("documents_with_errors"):
-            st.warning(f"Файлы с ошибками при чтении: {', '.join(summary['documents_with_errors'])}")
+    if run is None:
         return
-    if summary.get("documents_with_errors"):
-        st.warning(f"Некоторые файлы не удалось распознать (проверьте структуру колонок): {', '.join(summary['documents_with_errors'])}")
-    issues, positions = results["issues"], results["positions"]
-    ui.render(ui.section_html("Результат сверки", st.session_state.get("upload_label", "")))
-    if summary["mode"] != "llm":
-        ui.render(ui.banner_html(summary["banner"] or "ИИ-режим недоступен, использован базовый режим"))
-    ai = describe_ai(summary, live)
-    ui.render(f'<div class="note-small">{ui.escape(ai["line"])}</div>')
-    if ai["stopped"]:
-        st.warning(ai["stopped"])
-    blocks.metrics_block(summary, issues, positions)
-    blocks.traffic_block(summary)
-    ui.render(ui.section_html("Возможные расхождения", "Нажмите на строку, чтобы увидеть детали."))
-    blocks.issues_table_block(results)
-    ui.render(ui.section_html("Итоги сверки"))
-    ui.render('<ul class="summary-list">' + "".join(f"<li>{ui.escape(p)}</li>" for p in summary_points(results)) + "</ul>")
-    download_button(issues, positions, key="upload_report")
+    if not runner.recognised(run):
+        errors = run["summary"].get("documents_with_errors") or []
+        st.error(NOT_RECOGNIZED)
+        if errors:
+            st.warning(f"Файлы с ошибками при чтении: {', '.join(errors)}")
+        return
+    go_results(results_page)
 
 
-def render() -> None:
+def demo_block(results_page) -> None:
+    ui.render(ui.section_html("Демо-наборы", "Синтетические данные, девять файлов в каждом наборе. Ответы ИИ берутся из сохранённых, ключ не нужен. "
+                                             "Файлы можно скачать и загрузить выше: результат будет тем же."))
+    for name, title in SETS.items():
+        with st.container(key=f"demo_{name}"):
+            c1, c2, c3 = st.columns([3, 2, 2])
+            c1.markdown(f"**{title}**")
+            c2.download_button("Скачать набор (zip)", cached_zip(name), file_name=f"{name}.zip", mime="application/zip", key=f"zip_{name}")
+            if c3.button("Сверить на демо", key=f"run_{name}", type="primary" if name == "base" else "secondary"):
+                run_with_progress(title, results_page, set_name=name)
+
+
+def render(results_page=None) -> None:
     ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD))
     live = bool(api_key())
     if live:
@@ -153,27 +110,26 @@ def render() -> None:
     with st.expander("Как подготовить файлы", expanded=False):
         st.write(f"""
         1. **ВОР (ведомость объёмов работ):** обязательно, один или несколько файлов.
-        2. **Смета:** необязательно, один или несколько файлов, нужна для сверки цен за единицу.
-        3. **Договор:** необязательно, нужен для проверки срока выполнения работ.
-        4. **Акты выполненных работ:** обязательно, один или несколько файлов.
+        2. **Акты выполненных работ:** обязательно, один или несколько файлов.
+        3. **Смета:** необязательно, один или несколько файлов, нужна для сверки цен за единицу.
+        4. **Договор:** необязательно, нужен для проверки срока выполнения работ.
         5. **Формат и размер:** только Excel (.xlsx), не больше {MAX_FILE_MB} МБ на файл, не больше {MAX_FILES} файлов за один раз.
         """)
 
     st.caption(f"Только .xlsx, не больше {MAX_FILE_MB} МБ на файл, не больше {MAX_FILES} файлов.")
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         vor_files = st.file_uploader("ВОР (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="upload_vor",
                                      help="Один или несколько файлов ведомости объёмов работ (обязательно)")
+        act_files = st.file_uploader("Акты выполненных работ (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="upload_acts",
+                                     help="Один или несколько актов выполненных работ (обязательно)")
     with col2:
         estimate_files = st.file_uploader("Смета (.xlsx, необязательно)", type=["xlsx"], accept_multiple_files=True, key="upload_estimate",
                                           help="Один или несколько файлов сметы в текущих ценах")
         contract_file = st.file_uploader("Договор (.xlsx, необязательно)", type=["xlsx"], key="upload_contract",
                                          help="Договор с указанием срока и общей суммы")
-    with col3:
-        act_files = st.file_uploader("Акты выполненных работ (.xlsx)", type=["xlsx"], accept_multiple_files=True, key="upload_acts",
-                                     help="Один или несколько актов выполненных работ (обязательно)")
 
-    if st.button("Сверить", type="primary"):
+    if st.button("Сверить", type="primary", key="upload_run"):
         chosen = [*vor_files, *estimate_files, *([contract_file] if contract_file else []), *act_files]
         if not vor_files and not act_files:
             st.error("Пожалуйста, загрузите ведомость объёмов работ (ВОР) и хотя бы один акт выполненных работ.")
@@ -185,10 +141,7 @@ def render() -> None:
             for text in problems:
                 st.error(text)
         else:
-            run_uploaded(chosen)
+            run_with_progress("загруженные файлы", results_page, files=[(f.name, bytes(f.getbuffer())) for f in chosen])
 
-    sets_block()
-
-    if "upload_results" in st.session_state:
-        show_result(st.session_state["upload_results"], st.session_state["upload_summary"], st.session_state.get("upload_live", False))
+    demo_block(results_page)
     blocks.footer()

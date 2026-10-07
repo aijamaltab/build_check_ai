@@ -1,13 +1,11 @@
-"""Тесты страницы «Проверить свои файлы» (ui/screens/upload.py) через AppTest."""
+"""Тесты страницы «Загрузка данных» (ui/screens/upload.py) через AppTest."""
 import tempfile
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from src.pipeline import run_pipeline
 from tests.cache_guard import REAL_CACHE
-from ui.data import load_results
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_DIR = ROOT / "data" / "synthetic"
@@ -28,117 +26,113 @@ def upload_app():
     upload.render()
 
 
+def add(at, key, name):
+    at.file_uploader(key=key).upload(name, (DEMO_DIR / name).read_bytes())
+
+
 def test_upload_page_initial_render(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=60).run()
     assert not at.exception
     html = "\n".join(m.value for m in at.markdown)
-    assert "Проверить свои файлы" in html
+    assert "Загрузка данных" in html
     assert sum("Ключ ИИ на этом сайте не настроен" in i.value for i in at.info) == 1       # без ключа: честное сообщение, один блок
     assert not at.warning                                                                  # предупреждение о внешнем сервисе только при живом ИИ
-    assert "Готовые наборы для проверки" in html and "Синтетические данные" in html
-    assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 2
-    assert [b.label for b in at.button] == ["Сверить", "Сверить этот набор", "Сверить этот набор"]
-    assert len(at.file_uploader) == 4    # vor, estimate, contract, acts
+    assert "Демо-наборы" in html and "Синтетические данные" in html
+    assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 3
+    assert [b.label for b in at.button] == ["Сверить", "Сверить на демо", "Сверить на демо", "Сверить на демо"]
+    assert len(at.file_uploader) == 4    # vor, акты, смета, договор
 
 
 def test_upload_page_validation_empty(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=60).run()
-    at.button[0].click().run()
+    at.button(key="upload_run").click().run()
     assert not at.exception
     assert len(at.error) >= 1
     assert "Пожалуйста, загрузите" in at.error[0].value
-
-
-def test_upload_page_with_synthetic_results(llm_env, tmp_path):
-    # Запускаем pipeline на синтетических данных во временную БД
-    db_path = tmp_path / "upload_test.db"
-    summary = run_pipeline(DEMO_DIR, db_path, mode="llm", project_id="upload")
-    results = load_results(db_path, project_id="upload")
-    results["n_files"] = summary["files"]
-
-    at = AppTest.from_function(upload_app, default_timeout=60)
-    at.session_state["upload_results"] = results
-    at.session_state["upload_summary"] = summary
-    at.run()
-
-    assert not at.exception
-    html = "\n".join(m.value for m in at.markdown)
-
-    # результат на этой же странице: метрики, кнопка отчёта и та же сверочная ведомость (компонент)
-    assert "Результат сверки" in html
-    assert "Строк в документах" in html and "1 378 030" in html
-    assert len(at.get("iframe")) == 1 and sum(d.label.startswith("Скачать отчёт") for d in at.download_button) == 1
-    assert "ИИ: новых запросов 0, из сохранённых ответов" in html and "Итоги сверки" in html
-    assert 'class="issue-card"' not in html
-
-
-def test_upload_page_broken_files_message(llm_env):
-    at = AppTest.from_function(upload_app, default_timeout=60)
-    at.session_state["upload_summary"] = {"files": 0, "documents_with_errors": ["corrupt.xlsx"]}
-    at.session_state["upload_results"] = {"files": None, "issues": None, "positions": None}
-    at.run()
-
-    assert not at.exception
-    assert len(at.error) >= 1
-    assert "не были распознаны" in at.error[0].value
-    assert any("corrupt.xlsx" in w.value for w in at.warning)
+    assert "run_result" not in at.session_state
 
 
 def test_upload_real_files_end_to_end(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=180).run()
     assert not at.exception
-    at.file_uploader[0].upload("vor_1.xlsx", (DEMO_DIR / "vor_1.xlsx").read_bytes())
-    at.file_uploader[1].upload("estimate.xlsx", (DEMO_DIR / "estimate.xlsx").read_bytes())
+    add(at, "upload_vor", "vor_1.xlsx")
+    add(at, "upload_estimate", "estimate.xlsx")
     for f in ("act_1.xlsx", "act_2.xlsx"):
-        at.file_uploader[3].upload(f, (DEMO_DIR / f).read_bytes())
-    at.button[0].click().run()
-    assert not at.exception
-    html = "\n".join(m.value for m in at.markdown)
-    assert "Результат сверки" in html and "Итоги сверки" in html and len(at.get("iframe")) == 1
-    assert "ИИ: новых запросов 0" in html and "Ключ ИИ не настроен" in html
+        add(at, "upload_acts", f)
+    at.button(key="upload_run").click().run()
+    assert not at.exception and not at.error
+    run = at.session_state["run_result"]
+    assert run["label"] == "загруженные файлы" and run["set_name"] is None and run["live"] is False
+    assert run["summary"]["files"] == 4 and run["summary"]["ai"]["calls"] == 0
+    assert Path(run["files_dir"]).is_dir() and sorted(p.name for p in Path(run["files_dir"]).iterdir()) == ["act_1.xlsx", "act_2.xlsx", "estimate.xlsx", "vor_1.xlsx"]
 
 
-def test_upload_rejects_more_than_four_files(llm_env):
-    at = AppTest.from_function(upload_app, default_timeout=60).run()
-    at.file_uploader[0].upload("vor_1.xlsx", (DEMO_DIR / "vor_1.xlsx").read_bytes())
-    for f in ("act_1.xlsx", "act_2.xlsx", "act_3.xlsx", "act_4.xlsx"):
-        at.file_uploader[3].upload(f, (DEMO_DIR / f).read_bytes())
-    at.button[0].click().run()
-    assert not at.exception and any("максимум 4" in e.value for e in at.error)
-    assert "upload_results" not in at.session_state
-
-
-def test_upload_broken_file_end_to_end(llm_env):
+def test_same_files_as_the_demo_give_the_same_result(llm_env):
+    """DoD п. 3: девять файлов демо, загруженные вручную, дают тот же результат, что кнопка демо."""
     at = AppTest.from_function(upload_app, default_timeout=180).run()
+    for name in ("vor_1.xlsx", "vor_2.xlsx"):
+        add(at, "upload_vor", name)
+    add(at, "upload_estimate", "estimate.xlsx")
+    add(at, "upload_contract", "contract.xlsx")
+    for n in range(1, 6):
+        add(at, "upload_acts", f"act_{n}.xlsx")
+    at.button(key="upload_run").click().run()
+    assert not at.exception and not at.error
+    uploaded = at.session_state["run_result"]["summary"]
+    at.button(key="run_base").click().run()
+    demo = at.session_state["run_result"]["summary"]
+    assert uploaded["files"] == demo["files"] == 9
+    assert (uploaded["z"], uploaded["impact_som"], uploaded["statuses"]) == (demo["z"], demo["impact_som"], demo["statuses"]) == (13, 1378030.0, demo["statuses"])
+
+
+def test_upload_rejects_more_than_nine_files(llm_env):
+    at = AppTest.from_function(upload_app, default_timeout=60).run()
+    add(at, "upload_vor", "vor_1.xlsx")
+    for n in range(1, 6):
+        add(at, "upload_acts", f"act_{n}.xlsx")
+    for n in range(1, 5):
+        at.file_uploader(key="upload_estimate").upload(f"estimate_{n}.xlsx", (DEMO_DIR / "estimate.xlsx").read_bytes())
+    at.button(key="upload_run").click().run()
+    assert not at.exception and any("максимум 9" in e.value for e in at.error)
+    assert "run_result" not in at.session_state
+
+
+def test_upload_broken_file_with_one_good_act_keeps_result_and_reports_error(llm_env):
+    at = AppTest.from_function(upload_app, default_timeout=180).run()
+    at.file_uploader(key="upload_vor").upload("broken_vor.xlsx", b"invalid excel content not a zip")
+    add(at, "upload_acts", "act_1.xlsx")
+    at.button(key="upload_run").click().run()
     assert not at.exception
+    run = at.session_state.get("run_result")
+    assert run is not None and "broken_vor.xlsx" in run["summary"]["documents_with_errors"]       # на «Результатах» будет предупреждение
 
-    # Загружаем поврежденный файл вместо ВОР
-    at.file_uploader[0].upload("broken_vor.xlsx", b"invalid excel content not a zip")
-    at.file_uploader[3].upload("act_1.xlsx", (DEMO_DIR / "act_1.xlsx").read_bytes())
 
-    at.button[0].click().run()
+def test_upload_only_broken_files_shows_message_and_no_result(llm_env):
+    at = AppTest.from_function(upload_app, default_timeout=180).run()
+    at.file_uploader(key="upload_vor").upload("broken_vor.xlsx", b"invalid excel content not a zip")
+    at.file_uploader(key="upload_acts").upload("broken_act.xlsx", b"also not a zip")
+    at.button(key="upload_run").click().run()
     assert not at.exception
-
-    # Никакого traceback, понятное сообщение
-    html = "\n".join(m.value for m in at.markdown)
-    assert len(at.warning) >= 1
-    assert any("broken_vor.xlsx" in w.value for w in at.warning)
+    assert any("не были распознаны" in e.value for e in at.error) and "run_result" not in at.session_state
 
 
 def test_upload_rejects_big_files(llm_env):
     at = AppTest.from_function(upload_app, default_timeout=60).run()
-    at.file_uploader[0].upload("vor.xlsx", b"x" * (5 * 1024 * 1024 + 1))
-    at.file_uploader[3].upload("act_1.xlsx", (DEMO_DIR / "act_1.xlsx").read_bytes())
-    at.button[0].click().run()
+    at.file_uploader(key="upload_vor").upload("vor.xlsx", b"x" * (5 * 1024 * 1024 + 1))
+    add(at, "upload_acts", "act_1.xlsx")
+    at.button(key="upload_run").click().run()
     assert not at.exception
     assert any("vor.xlsx" in e.value and "больше 5 МБ" in e.value for e in at.error)
-    assert "upload_results" not in at.session_state
+    assert "run_result" not in at.session_state
 
 
-def test_upload_removes_temp_files(llm_env, tmp_path):
+def test_failed_run_leaves_no_temp_folders_and_keeps_previous_result(llm_env, tmp_path):
     at = AppTest.from_function(upload_app, default_timeout=180).run()
-    at.file_uploader[0].upload("vor_1.xlsx", (DEMO_DIR / "vor_1.xlsx").read_bytes())
-    at.file_uploader[3].upload("act_1.xlsx", (DEMO_DIR / "act_1.xlsx").read_bytes())
-    at.button[0].click().run()
-    assert not at.exception
-    assert list(tmp_path.glob("buildcheck_upload_*")) == []
+    at.button(key="run_base").click().run()
+    kept = at.session_state["run_result"]["db_path"]
+    at.file_uploader(key="upload_vor").upload("broken_vor.xlsx", b"invalid excel content not a zip")
+    at.file_uploader(key="upload_acts").upload("broken_act.xlsx", b"also not a zip")
+    at.button(key="upload_run").click().run()
+    assert any("не были распознаны" in e.value for e in at.error)
+    assert at.session_state["run_result"]["db_path"] == kept and Path(kept).exists()                # прошлый результат не повреждён
+    assert len(list(tmp_path.glob("buildcheck_run_*"))) == 1                                        # папка неудачного прогона удалена

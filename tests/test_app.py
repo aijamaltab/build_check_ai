@@ -8,6 +8,8 @@ from streamlit.testing.v1 import AppTest
 from tests.cache_guard import REAL_CACHE
 
 ROOT = Path(__file__).resolve().parents[1]
+START = "Запустить на демо-данных"
+TITLES = ["Загрузка данных", "Результаты", "Исходные таблицы", "Как работает ИИ"]
 
 
 @pytest.fixture()
@@ -31,6 +33,17 @@ def run_app() -> AppTest:
     return AppTest.from_file(str(ROOT / "app.py"), default_timeout=180).run()
 
 
+def demo_started(key: str = "run_base") -> AppTest:
+    """Полный поток через app.py: клик по демо-набору на странице загрузки -> switch_page -> «Результаты»."""
+    at = run_app()
+    at.button(key=key).click().run()
+    return at
+
+
+def cards(at) -> int:
+    return body(at).count('class="issue-card"')
+
+
 def rationale_app():
     import os
     os.environ.setdefault("LLM_CACHE_ONLY", "1")
@@ -45,88 +58,188 @@ def results_app():
     results.render()
 
 
-def results_run() -> AppTest:
-    return AppTest.from_function(results_app, default_timeout=180).run()
+def sheets_app():
+    import os
+    os.environ.setdefault("LLM_CACHE_ONLY", "1")
+    from ui import runner, sheets_view
+    if runner.current_run() is None:
+        runner.execute_set("base", "Базовый набор")
+    sheets_view.render()
 
 
-# ---------- страница «Главная» ----------
-START = "Загрузить файлы в систему и сверить"
+def results_with_run_app():
+    """Страница «Результаты» с готовым прогоном: AppTest после switch_page перезапускает страницу по умолчанию, поэтому виджеты проверяем отдельно."""
+    import os
+    os.environ.setdefault("LLM_CACHE_ONLY", "1")
+    from ui import runner
+    from ui.screens import results
+    if runner.current_run() is None:
+        runner.execute_set("base", "Базовый набор")
+    results.render()
 
 
-def home_started() -> AppTest:
-    at = run_app()
-    next(b for b in at.button if b.label == START).click().run()
-    return at
+def empty_sheets_app():
+    from ui import sheets_view
+    sheets_view.render()
 
 
+# ---------- структура сайта ----------
+def test_app_registers_four_pages_in_new_order():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    positions = [source.index(f'title="{t}"') for t in TITLES]
+    assert positions == sorted(positions)
+    assert all(f'url_path="{p}"' in source for p in ("upload", "results", "sheets", "rationale"))
+    assert 'title="Загрузка данных", url_path="upload", default=True' in source                  # страница по умолчанию
+    assert 'position="sidebar"' in source and "st.navigation" in source                           # навигация слева
 
-def test_home_before_click_shows_intro_and_files_but_no_result(llm_env):
+
+# ---------- «Загрузка данных» ----------
+def test_default_page_is_upload_with_uploaders_and_three_demo_sets(llm_env):
     at = run_app()
     assert not at.exception
     html = body(at)
-    assert "Сверка строительных документов" in html and "Сопоставляет ВОР, смету, договор и акты" in html
-    for text in ("Приводит четыре документа к одной таблице", "ИИ сопоставляет названия, код считает объёмы и цены",
-                 "Показывает возможные расхождения и их влияние на бюджет в сомах",
-                 "ВОР: ведомость объёмов работ, список работ и их объёмов по проекту", "Демо-проект: файлы", "Данные демо синтетические"):
-        assert text in html
-    assert "trio-num" not in html and html.count('class="step"') == 3
-    assert len(at.download_button) == 9 and any(b.label == START for b in at.button)       # девять файлов и главная кнопка
-    for hidden in ('class="tile"', 'class="tbar"', "Итоги сверки", "Возможные расхождения"):
-        assert hidden not in html                                                       # до нажатия результата нет
-    assert len(at.get("iframe")) == 0
+    assert "Загрузка данных" in html and "Демо-наборы" in html and "Данные синтетические" in page(at)
+    assert {u.key for u in at.file_uploader} == {"upload_vor", "upload_acts", "upload_estimate", "upload_contract"}
+    assert [b.key for b in at.button] == ["upload_run", "run_base", "run_set_3", "run_set_4"]
+    assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 3
+    assert "Базовый набор" in html and "Набор 3" in html and "Набор 4" in html
+    assert "Проект:</b> данные не загружены" in html and "Прогон:" not in html                    # шапка до первой сверки
+    assert "run_result" not in at.session_state and not at.get("iframe")
     assert "Прототип. Данные синтетические. Результат требует проверки специалистом." in html
 
 
-def test_home_file_table_lists_nine_files_with_roles_and_row_counts(llm_env):
-    at = run_app()
-    text = " ".join(m.value for m in at.markdown)
-    for name in ("vor_1.xlsx", "vor_2.xlsx", "estimate.xlsx", "contract.xlsx", "act_1.xlsx", "act_5.xlsx"):
-        assert name in text
-    assert sorted(d.label for d in at.download_button) == ["Скачать"] * 9
+def test_demo_click_runs_check_and_switches_to_results(llm_env):
+    at = demo_started()
+    assert not at.exception and not at.error
+    run = at.session_state["run_result"]
+    assert run["summary"]["files"] == 9 and run["summary"]["z"] == 13 and run["set_name"] == "base" and run["summary"]["ai"]["calls"] == 0
+    assert [t.label for t in at.tabs][:3] == ["Сводка", "Расхождения", "Позиции"]               # уже страница «Результаты»
+    assert not at.file_uploader
 
 
-def test_home_after_click_shows_tiles_traffic_issue_table_and_summary(llm_env):
-    at = home_started()
+@pytest.mark.parametrize("key,issues", [("run_base", 13), ("run_set_3", 15), ("run_set_4", 15)])
+def test_each_demo_set_runs_from_cache_without_new_ai_calls(llm_env, key, issues):
+    at = demo_started(key)
+    assert not at.exception and not at.error
+    summary = at.session_state["run_result"]["summary"]
+    ai = summary["ai"]
+    assert summary["files"] == 9 and summary["z"] == issues and summary["mode"] == "llm"
+    assert ai["calls"] == 0 and ai["cache_hits"] > 0 and ai["errors"] == 0 and ai["no_answer"] == 0     # ответы ИИ только из кэша, пропусков нет
+    assert ai["pairs_no_decision"] == 0 and ai["rows_no_decision"] == 0
+
+
+def test_runs_of_different_sessions_use_separate_database_files(llm_env, tmp_path):
+    first, second = demo_started(), demo_started("run_set_3")
+    a, b = first.session_state["run_result"], second.session_state["run_result"]
+    assert a["db_path"] != b["db_path"] and Path(a["db_path"]).exists() and Path(b["db_path"]).exists()   # один не затёр другой
+    assert Path(a["db_path"]).is_relative_to(tmp_path) and ROOT not in Path(a["db_path"]).parents       # база не в репозитории
+    assert a["summary"]["z"] == 13 and b["summary"]["z"] == 15
+
+
+def test_new_run_in_the_same_session_removes_the_previous_workdir(llm_env, tmp_path):
+    from ui import runner
+
+    def two_runs():
+        from ui import runner as r
+        import streamlit as st
+        r.execute_set("base", "Базовый набор")
+        st.session_state["first_dir"] = st.session_state[r.RUN_KEY]["workdir"]
+        r.execute_set("set_3", "Набор 3")
+
+    at = AppTest.from_function(two_runs, default_timeout=180).run()
     assert not at.exception
+    assert not Path(at.session_state["first_dir"]).exists() and Path(at.session_state[runner.RUN_KEY]["workdir"]).exists()
+    assert len(list(tmp_path.glob("buildcheck_run_*"))) == 1
+
+
+# ---------- «Результаты» ----------
+def test_results_empty_state_offers_upload_and_demo(llm_env):
+    at = AppTest.from_function(results_app, default_timeout=180).run()
+    assert not at.exception
+    assert any("Загрузите данные" in i.value for i in at.info) and not at.tabs
+    assert [b.label for b in at.button] == [START] and not at.download_button
+
+
+def test_results_empty_state_demo_button_builds_result_in_place(llm_env):
+    at = AppTest.from_function(results_app, default_timeout=180).run()
+    at.button(key="results_demo").click().run()
+    assert not at.exception and not at.error
+    assert [t.label for t in at.tabs] == ["Сводка", "Расхождения", "Позиции"] and at.session_state["run_result"]["summary"]["z"] == 13
+
+
+def test_results_summary_tab_has_tiles_traffic_charts_and_totals(llm_env):
+    at = demo_started()
     html = body(at)
-    assert "Результат собран из сохранённых ответов ИИ" in html and "ключ" not in html.lower()      # про ключ только на странице загрузки
     assert html.count('class="tile"') == 5
     for label in ("Строк в документах", "Позиций ВОР", "Расхождений", "Возможное влияние, сом", "Позиций с отклонением от плана"):
         assert label in html
     assert ">180<" in html and ">48<" in html and ">13<" in html and "1 378 030" in html and ">18<" in html
-    assert html.count('class="tbar"') == 1 and html.count('class="legend"') == 1                  # светофор и пояснение один раз
+    assert html.count('class="tbar"') == 1 and html.count('class="legend"') == 1                  # светофор один раз
     assert "Красные: <b>11</b>" in html and "Жёлтые: <b>7</b>" in html and "Зелёные: <b>30</b>" in html
-    assert 'class="issue-card"' not in html and len(at.get("iframe")) == 1
+    assert len(at.get("vega_lite_chart")) == 2                                                # диаграммы: по типам и влияние
     assert "Итоги сверки" in html and html.count("<li>") == 5
     assert "Найдено 13 возможных расхождений" in html and "Без ИИ было бы 18 расхождений, из них 10 ложных; с ИИ 13, из них ложных 1." in html
     assert "Проверить первыми: Монтаж системы видеонаблюдения (240 000 сом)" in html
-    assert any(b.label == "Начать заново" for b in at.button)
+    assert "Результат собран из сохранённых ответов ИИ" in html and "ключ" not in html.lower()
+    assert [d.label for d in at.download_button] == ["Скачать отчёт в Excel (.xlsx)"]
 
 
-def test_home_reset_returns_to_files_view(llm_env):
-    at = home_started()
-    next(b for b in at.button if b.label == "Начать заново").click().run()
-    assert not at.exception and 'class="tile"' not in body(at) and any(b.label == START for b in at.button)
+def test_results_have_no_duplicate_blocks(llm_env):
+    html = body(demo_started())
+    assert html.count("Итоги сверки") == 1 and html.count("Возможные расхождения") == 1 and html.count('class="tile"') == 5
+    assert "Сверочная ведомость" not in html and "Главная" not in html
 
 
-def test_topbar_shows_project_run_date_and_mode(llm_env):
-    html = page(run_app())
-    assert "Проект:" in html and "Капремонт школы" in html and "Прогон:" in html and "Режим:" in html and "С ИИ (из кэша)" in html
-
-
-# ---------- страница «Сверочная ведомость» ----------
-def test_ledger_page_has_table_component_and_report_tab(llm_env):
-    at = results_run()
-    assert not at.exception
-    assert [t.label for t in at.tabs][:2] == ["Ведомость", "Отчёт"]
+def test_results_issues_tab_shows_cards_with_sources_and_filters(llm_env):
+    at = AppTest.from_function(results_with_run_app, default_timeout=180).run()
+    assert cards(at) == 13 and len(at.get("iframe")) == 1                                           # карточки; таблица позиций это компонент
     html = body(at)
-    assert "Сверочная ведомость" in html
-    assert "Возможное влияние на бюджет, сом" not in html and "Строк в документах" not in html     # метрики здесь не повторяются
-    assert 'class="issue-card"' not in html and len(at.get("iframe")) == 1                           # таблица это компонент
-    assert len(at.download_button) == 1
+    assert "Показано 13 из 13" in html and html.count("issue-src") >= 13
+    at.selectbox(key="flt_severity").select("высокая").run()
+    high = cards(at)
+    assert 0 < high < 13 and f"Показано {high} из 13" in body(at)
+    at.selectbox(key="flt_severity").select("Все").run()
+    at.multiselect(key="flt_types").select("price_increase").run()
+    assert 0 < cards(at) < 13
+    at.text_input(key="flt_query").input("такой работы нет").run()
+    assert cards(at) == 0 and any("нет" in i.value for i in at.info)
 
 
-# ---------- страница «Как работает ИИ» ----------
+def test_results_positions_tab_has_ledger_component(llm_env):
+    at = demo_started()
+    assert len(at.get("iframe")) == 1 and "Позиции со светофором" in body(at)
+
+
+def test_topbar_shows_project_run_date_and_mode_after_run(llm_env):
+    html = page(demo_started())
+    assert "Проект:" in html and "Базовый набор" in html and "Прогон:" in html and "Режим:" in html and "С ИИ (из кэша)" in html
+
+
+# ---------- «Исходные таблицы» ----------
+def test_sheets_empty_state_offers_upload_and_demo(llm_env):
+    at = AppTest.from_function(empty_sheets_app, default_timeout=60).run()
+    assert not at.exception and any("Загрузите данные" in i.value for i in at.info)
+    assert [b.label for b in at.button] == [START] and not at.get("iframe")
+
+
+def test_sheets_page_reads_run_result_and_numbers_come_from_the_run(llm_env):
+    at = AppTest.from_function(sheets_app, default_timeout=180).run()
+    assert not at.exception and len(at.get("iframe")) == 1
+    model = at.session_state["run_result"]["sheets_model"]
+    card = model["project"]
+    assert card["issues"] == 13 and card["impact_som"] == "1 378 030 сом" and (card["red"], card["yellow"], card["green"]) == (11, 7, 30)
+    assert len(model["tabs"]) == 9
+
+
+def test_sheets_project_card_is_not_hardcoded_to_the_base_demo(llm_env):
+    from ui import sheets_view
+    other = demo_started("run_set_3").session_state["run_result"]
+    card = sheets_view.project_card(other)
+    assert card["issues"] == other["summary"]["z"] == 15 and card["impact_som"] != "1 378 030 сом"
+    assert card["red"] + card["yellow"] + card["green"] == sum(other["summary"]["statuses"].values())
+
+
+# ---------- «Как работает ИИ» ----------
 def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
     at = AppTest.from_function(rationale_app, default_timeout=180).run()
     assert not at.exception
@@ -159,21 +272,10 @@ def test_rationale_page_compares_modes_and_shows_ai_work(llm_env):
     assert html.count("<tr") > 50
 
 
-def test_rationale_page_has_collapsed_source_files_viewer(llm_env):
+def test_rationale_page_keeps_the_essentials_and_hides_details(llm_env):
     at = AppTest.from_function(rationale_app, default_timeout=180).run()
     assert not at.exception
-    assert [e.label for e in at.expander] == ["Исходные файлы демо"] and at.expander[0].proto.expanded is False
-    assert at.selectbox[0].options[0] == "ВОР, каркас А · vor_1.xlsx" and len(at.selectbox[0].options) == 9
+    assert [e.label for e in at.expander] == ["Подробности: расхождения по режимам, пары названий и примеры"] and at.expander[0].proto.expanded is False
     html = body(at)
-    assert "Ведомость объёмов работ (ВОР)" in html and "Колонки, которые распознаёт программа" in html
-    assert html.index("Где ИИ ошибается") < html.index("Исходные файлы")                 # просмотрщик в самом низу
-    assert list(at.dataframe[0].value.columns)[:3] == ["Строка", "A", "B"]
-
-
-def test_app_registers_four_pages_in_new_order():
-    source = (ROOT / "app.py").read_text(encoding="utf-8")
-    titles = ["Главная", "Проверить свои файлы", "Сверочная ведомость", "Как работает ИИ"]
-    positions = [source.index(f'title="{t}"') for t in titles]
-    assert positions == sorted(positions)
-    assert all(f'url_path="{p}"' in source for p in ("home", "upload", "ledger", "rationale"))
-    assert 'position="sidebar"' in source                                    # навигация слева
+    assert html.index("Без ИИ и с ИИ") < html.index("Как ИИ и код делят работу") < html.index("Где ИИ ошибается") < html.index("Шесть примеров из сохранённых")
+    assert "Исходные файлы" not in html and not at.selectbox                              # просмотр файлов переехал на «Исходные таблицы»

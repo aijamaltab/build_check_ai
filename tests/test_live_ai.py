@@ -190,18 +190,29 @@ def test_page_with_key_shows_privacy_warning_and_limits(live_env):
     assert KEY not in page_text(at)
 
 
-def test_page_runs_new_set_with_live_ai_and_shows_counts(live_env, monkeypatch):
+UPLOAD_KEYS = {"vor": "upload_vor", "act": "upload_acts", "estimate": "upload_estimate", "contract": "upload_contract"}
+
+
+def upload_folder(at, folder):
+    """Кладёт все девять файлов набора в поля загрузки страницы (ВОР, акты, смета, договор)."""
+    for path in sorted(folder.glob("*.xlsx")):
+        at.file_uploader(key=UPLOAD_KEYS[path.stem.split("_")[0]]).upload(path.name, path.read_bytes())
+
+
+def test_page_runs_new_files_with_live_ai_and_saves_counts(live_env, monkeypatch):
     from ui.screens import upload
     monkeypatch.setattr(upload, "site_budget", lambda: CallBudget(1000, daily=True))
     at = AppTest.from_function(upload_app, default_timeout=180)
     at.session_state["live_budget"] = CallBudget(1000)
     at.run()
-    at.button(key="run_set_2").click().run()
-    assert not at.exception
-    text = page_text(at)
-    assert FakeTransport.calls > 25 and f"ИИ: новых запросов {FakeTransport.calls}" in text      # лимит сессии 25 здесь поднят, ответы живые
-    assert "Разбор остановлен" not in text and len(at.get("iframe")) == 1 and "Результат сверки" in text
-    assert KEY not in text
+    upload_folder(at, SET_2)
+    at.button(key="upload_run").click().run()
+    assert not at.exception and not at.error
+    run = at.session_state["run_result"]
+    ai = describe_ai(run["summary"], run["live"])
+    assert FakeTransport.calls > 25 and run["summary"]["ai"]["calls"] == FakeTransport.calls      # лимит сессии 25 здесь поднят, ответы живые
+    assert f"ИИ: новых запросов {FakeTransport.calls}" in ai["line"] and ai["stopped"] is None
+    assert KEY not in page_text(at)
 
 
 def test_page_stops_politely_when_session_limit_is_exhausted(live_env, monkeypatch):
@@ -210,12 +221,21 @@ def test_page_stops_politely_when_session_limit_is_exhausted(live_env, monkeypat
     at = AppTest.from_function(upload_app, default_timeout=180)
     at.session_state["live_budget"] = CallBudget(3)
     at.run()
-    at.button(key="run_set_3").click().run()
+    upload_folder(at, ROOT / "data" / "synthetic_sets" / "set_3")
+    at.button(key="upload_run").click().run()
     assert not at.exception and not at.error
-    warn = " ".join(w.value for w in at.warning)
-    assert "Разбор остановлен" in warn and "лимит живых ИИ-запросов для вашей сессии (3)" in warn and "осталось пар" in warn
-    assert len(at.get("iframe")) == 1 and KEY not in page_text(at)                              # результат всё равно показан
+    run = at.session_state["run_result"]
+    stopped = describe_ai(run["summary"], run["live"])["stopped"]
+    assert "Разбор остановлен" in stopped and "лимит живых ИИ-запросов для вашей сессии (3)" in stopped and "осталось пар" in stopped
+    assert run["results"]["issues"] is not None and KEY not in page_text(at)                     # результат всё равно собран
     assert FakeTransport.calls == 3
+
+
+def test_demo_sets_use_cache_only_even_when_the_key_is_set(live_env, monkeypatch):
+    monkeypatch.setenv("LLM_CACHE_DIR", str(REAL_CACHE))
+    at = AppTest.from_function(upload_app, default_timeout=180).run()
+    at.button(key="run_set_3").click().run()
+    assert not at.exception and FakeTransport.calls == 0 and at.session_state["run_result"]["live"] is False
 
 
 def test_page_without_key_uses_cache_and_never_calls_api(monkeypatch, tmp_path):
@@ -226,7 +246,7 @@ def test_page_without_key_uses_cache_and_never_calls_api(monkeypatch, tmp_path):
     monkeypatch.setattr("src.llm.client.GenaiTransport", FakeTransport)
     FakeTransport.calls = 0
     at = AppTest.from_function(upload_app, default_timeout=180).run()
-    at.button(key="run_set_2").click().run()
+    at.button(key="run_base").click().run()
     assert not at.exception and FakeTransport.calls == 0
-    text = page_text(at)
-    assert "ИИ: новых запросов 0, из сохранённых ответов" in text and "Ключ ИИ не настроен" in text
+    run = at.session_state["run_result"]
+    assert run["summary"]["ai"]["calls"] == 0 and run["summary"]["ai"]["cache_hits"] > 0

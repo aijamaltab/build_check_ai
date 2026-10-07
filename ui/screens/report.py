@@ -1,6 +1,5 @@
-"""Отчёт по сверке: Excel-книга (.xlsx) с листами «Расхождения» и «Позиции», кнопка скачивания и предпросмотр."""
+"""Отчёт по сверке: Excel-книга (.xlsx) с листами «Расхождения» и «Позиции» и кнопка скачивания."""
 import io
-from pathlib import Path
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -8,7 +7,6 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 
-from ui import components as ui
 from ui.data import build_cards, cards_frame, positions_view, sort_issues
 
 
@@ -129,22 +127,3 @@ def download_button(issues: pd.DataFrame, positions: pd.DataFrame, key: str = "r
     st.download_button(label="Скачать отчёт в Excel (.xlsx)", data=generate_excel_report(issues, positions), file_name="buildcheck_report.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", icon=":material/download:", key=key)
 
-
-def render_report(issues: pd.DataFrame, positions: pd.DataFrame) -> None:
-    """Вкладка «Отчёт»: кнопка скачивания и предпросмотр листов книги."""
-    if issues is None or positions is None or positions.empty:
-        st.info("Нет данных для формирования отчёта.")
-        return
-    ui.render(ui.section_html("Отчёт в Excel", "Два листа: «Расхождения» с источниками и «Позиции» со светофором."))
-    col_btn, _ = st.columns([2, 3])
-    with col_btn:
-        download_button(issues, positions)
-    ui.render(ui.section_html("Предпросмотр листов отчёта", "Листы Excel-книги, сформированные для выгрузки."))
-    tab_issues, tab_positions = st.tabs([f"Лист «Расхождения» ({len(issues)})", f"Лист «Позиции» ({len(positions)})"])
-    with tab_issues:
-        ui.stretch(st.dataframe, cards_frame(build_cards(sort_issues(issues), positions)), hide_index=True, height=450,
-                   column_config={"Влияние, сом": st.column_config.NumberColumn("Влияние, сом", format="localized"),
-                                  "Источник": st.column_config.TextColumn("Источник", width="large"),
-                                  "Что не так": st.column_config.TextColumn("Что не так", width="large")})
-    with tab_positions:
-        ui.stretch(st.dataframe, ui.style_positions(positions_view(positions)), hide_index=True, height=450)
