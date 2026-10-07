@@ -222,9 +222,9 @@ def segmented(label: str, options: list, default: str, key: str) -> str:
     return st.radio(label, options, index=options.index(default), horizontal=True, key=key, label_visibility="collapsed")
 
 
-def topbar_html(project: str, run_at: str, mode: str) -> str:
-    return (f'<div class="topbar"><span class="topbar-item"><b>Проект:</b> {escape(project)}</span>'
-            f'<span class="topbar-item"><b>Прогон:</b> {escape(run_at)}</span><span class="topbar-item"><b>Режим:</b> {escape(mode)}</span></div>')
+def topbar_html(project: str, run_at: str = "", mode: str = "") -> str:
+    items = [f'<span class="topbar-item"><b>Проект:</b> {escape(project)}</span>']
+    return f'<div class="topbar">{"".join(items)}</div>'
 
 
 # ---------- главная страница: шаги, плитки, тонкий светофор ----------
