@@ -184,7 +184,7 @@ def page_text(at) -> str:
 def test_page_with_key_shows_privacy_warning_and_limits(live_env):
     at = AppTest.from_function(upload_app, default_timeout=60).run()
     assert not at.exception
-    assert any("Загружайте только учебные или обезличенные документы. Названия работ из загруженных файлов отправляются во внешний сервис ИИ"
+    assert any("обезличенные документы, без коммерческой тайны: названия работ из них отправляются во внешний сервис ИИ (Gemini). Демо-наборы никуда не отправляются"
                in w.value for w in at.warning)
     assert any("разбирает ИИ в реальном времени" in i.value and "25 запросов на сессию" in i.value and "150 в сутки" in i.value for i in at.info)
     assert KEY not in page_text(at)

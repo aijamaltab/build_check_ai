@@ -35,7 +35,7 @@ def test_upload_page_initial_render(llm_env):
     assert not at.exception
     html = "\n".join(m.value for m in at.markdown)
     assert "Сверка строительных документов" in html
-    assert sum("Ключ ИИ на этом сайте не настроен" in i.value for i in at.info) == 1       # без ключа: честное сообщение, один блок
+    assert sum("Живой ИИ на этом сайте сейчас выключен" in i.value for i in at.info) == 1       # без ключа: честное сообщение, один блок
     assert not at.warning                                                                  # предупреждение о внешнем сервисе только при живом ИИ
     assert "Попробуйте на демо-наборе" in html and "Синтетические данные" in html
     assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 3
