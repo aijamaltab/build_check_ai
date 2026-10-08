@@ -1200,7 +1200,7 @@ def render(upload_page=None) -> None:
             z-index: 1000 !important;
         }
 
-        /* Иконка открытия сайдбара строго на уровне topbar слева по центру (высота 38px) */
+        /* Кнопка «Меню» (общий вид из ui/styles.py) в полосе topbar слева, высота 28px внутри полосы 38px */
         [data-testid="stExpandSidebarButton"],
         [data-testid="stSidebarCollapsedControl"],
         [data-testid="collapsedControl"] {
@@ -1213,22 +1213,14 @@ def render(upload_page=None) -> None:
             position: fixed !important;
             top: 5px !important;
             left: 8px !important;
-            width: 28px !important;
             height: 28px !important;
-            background: transparent !important;
+            padding: 0 12px 0 6px !important;
         }
 
-        [data-testid="stExpandSidebarButton"]:hover,
-        [data-testid="stSidebarCollapsedControl"]:hover,
-        [data-testid="collapsedControl"]:hover {
-            background: rgba(0, 0, 0, 0.05) !important;
-            border-radius: 4px !important;
-        }
-
-        /* Верхняя видимая панель фиксированной высоты 38px с отступом слева под кнопку сайдбара */
+        /* Верхняя видимая панель фиксированной высоты 38px с отступом слева под кнопку «Меню» */
         .topbar {
             margin: 0 !important;
-            padding: 6px 14px 6px 44px !important;
+            padding: 6px 14px 6px 112px !important;
             border-radius: 0 !important;
             border-left: none !important;
             border-right: none !important;
@@ -1238,6 +1230,13 @@ def render(upload_page=None) -> None:
             flex: none !important;
             display: flex !important;
             align-items: center !important;
+        }
+
+        /* На телефоне в полосе помещается только название проекта: одна строка, лишнее обрезается, режим скрыт */
+        @media (max-width: 640px) {
+            .topbar { padding-left: 106px !important; overflow: hidden !important; flex-wrap: nowrap !important; }
+            .topbar-item { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+            .topbar-item:nth-child(n+2) { display: none !important; }
         }
 
         /* Вычитаем высоту верхней панели (38px) из полной высоты экрана для таблицы */

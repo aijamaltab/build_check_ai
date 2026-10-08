@@ -21,6 +21,15 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
 .topbar { display: flex; flex-wrap: wrap; gap: 4px 22px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
           padding: 7px 12px; margin: 0 0 12px 0; font-size: 0.84rem; color: var(--muted); }
 .topbar b { color: var(--ink); font-weight: 600; }
+/* Кнопка открытия меню страниц: яркая, с подписью «Меню» и короткой пульсацией (3 раза), чтобы новички её замечали */
+[data-testid="stExpandSidebarButton"] { width: auto !important; height: 38px !important; padding: 0 16px 0 10px !important; gap: 4px; border-radius: 20px !important;
+        background: var(--accent) !important; color: #fff !important; box-shadow: 0 2px 8px rgba(31, 78, 121, 0.35); cursor: pointer;
+        animation: nav-pulse 1.8s ease-out 3; }
+[data-testid="stExpandSidebarButton"]::after { content: "Меню"; font-size: 0.92rem; font-weight: 600; color: #fff; }
+[data-testid="stExpandSidebarButton"] span, [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] { color: #fff !important; }
+[data-testid="stExpandSidebarButton"]:hover { background: #17405F !important; }
+@keyframes nav-pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0.6); } 70% { box-shadow: 0 0 0 16px rgba(31, 78, 121, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0); } }
+@media (prefers-reduced-motion: reduce) { [data-testid="stExpandSidebarButton"] { animation: none; } }
 .hero { padding: 0 0 4px 0; }
 .hero-title { font-size: 1.5rem; line-height: 1.25; font-weight: 600; margin: 4px 0 4px 0; }
 .hero-lead { font-size: 0.95rem; line-height: 1.45; color: var(--muted); margin: 0 0 6px 0; max-width: 860px; }

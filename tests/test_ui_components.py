@@ -117,3 +117,10 @@ def test_fileinfo_html_shows_role_template_facts_and_columns():
     assert "vor_1.xlsx" in html and "Ведомость объёмов работ (ВОР)" in html and "шаблон: ВОР, каркас А" in html
     assert "Позиций прочитано: <b>30</b>" in html and html.count('class="chip"') == 2 and "&lt;x&gt;" in html and "<x>" not in html
     assert "Колонки, которые распознаёт программа" in html and "\n\n" not in html
+
+
+def test_menu_button_is_bright_labeled_and_animated_but_respects_reduced_motion():
+    from ui.styles import CSS
+    assert 'stExpandSidebarButton' in CSS and 'content: "Меню"' in CSS                      # кнопка открытия меню с подписью
+    assert "@keyframes nav-pulse" in CSS and "animation: nav-pulse 1.8s ease-out 3" in CSS    # пульсирует три раза и затихает
+    assert "prefers-reduced-motion: reduce" in CSS                                           # без анимации для тех, кто её отключил
