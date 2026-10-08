@@ -6,7 +6,7 @@ import streamlit as st
 FONT_IMPORT = "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');"
 
 CSS = FONT_IMPORT + """
-:root { --bg: #F4F6F8; --ink: #1B2733; --muted: #5B6877; --line: #D8DEE6; --panel: #EEF2F6; --accent: #1F4E79; --accent-soft: #E7EEF5;
+:root { color-scheme: light; --bg: #F4F6F8; --ink: #1B2733; --muted: #5B6877; --line: #D8DEE6; --panel: #EEF2F6; --accent: #1F4E79; --accent-soft: #E7EEF5;
         --vor: #EEF2F6; --vor-line: #D8DEE6; --act: #F7F1E4; --act-line: #E6D8B8; --radius: 6px;
         --sans: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif; }
 html, body, .stApp, .stApp :is(p, span, div, label, a, li, button, input, textarea, select, h1, h2, h3, h4):not([data-testid="stIconMaterial"], [data-testid="stIconMaterial"] *) { font-family: var(--sans); }
@@ -21,6 +21,7 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
 .topbar { display: flex; flex-wrap: wrap; gap: 4px 22px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
           padding: 7px 12px; margin: 0 0 12px 0; font-size: 0.84rem; color: var(--muted); }
 .topbar b { color: var(--ink); font-weight: 600; }
+.only-mobile { display: none; }
 /* Кнопка открытия меню страниц: светлая капсула с акцентной рамкой, значок-«гамбургер» и подпись «Меню»; три мягких пульсации при заходе */
 [data-testid="stExpandSidebarButton"] { width: auto !important; height: 34px !important; margin: 8px 0 0 10px !important; padding: 0 16px 0 14px !important; gap: 10px;
         border-radius: 17px !important; background: #fff !important; border: 1.5px solid var(--accent) !important; color: var(--accent) !important;
@@ -179,10 +180,20 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
   .plain td { border: 0; padding: 3px 10px; }
   .plain td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
   .plain tr { border-bottom: 1px solid var(--line); padding: 5px 0; }
+  /* таблица расхождений на телефоне остаётся настоящей таблицей (обзор), подробности в «Карточках» */
+  .plain.compact-m { display: table; width: 100%; }
+  .plain.compact-m thead { display: table-header-group; }
+  .plain.compact-m tbody { display: table-row-group; }
+  .plain.compact-m tr { display: table-row; padding: 0; border-bottom: 0; }
+  .plain.compact-m th, .plain.compact-m td { display: table-cell; width: auto; padding: 7px 4px; font-size: 0.78rem; border-bottom: 1px solid #E8ECF1; overflow-wrap: break-word; }
+  .plain.compact-m td::before { display: none; }
+  .plain.compact-m .hm { display: none; }
+  .plain.compact-m td[data-label="Влияние, сом"] { white-space: nowrap; text-align: right; }
+  .only-mobile { display: block; }
   .chain tr { border-bottom: 1px solid var(--line); padding: 6px 0; }
   .chain td { border: 0; padding: 4px 10px; }
   .chain td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .block-container { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 3.6rem; }
+  .block-container { padding-left: 0.75rem; padding-right: 0.75rem; padding-top: 4rem; }
   .hero-title { font-size: 1.25rem; }
   .trio { grid-template-columns: 1fr; gap: 8px; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }

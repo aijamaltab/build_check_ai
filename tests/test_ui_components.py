@@ -1,4 +1,6 @@
 """ui/components.py: HTML карточек, светофора, метрик и таблицы позиций (без запуска Streamlit)."""
+from pathlib import Path
+
 import pandas as pd
 
 from ui import components as c
@@ -124,3 +126,32 @@ def test_menu_button_is_bright_labeled_and_animated_but_respects_reduced_motion(
     assert 'stExpandSidebarButton' in CSS and 'content: "Меню"' in CSS                      # кнопка открытия меню с подписью
     assert "@keyframes nav-pulse" in CSS and "animation: nav-pulse 1.8s ease-out 3" in CSS    # пульсирует три раза и затихает
     assert "prefers-reduced-motion: reduce" in CSS                                           # без анимации для тех, кто её отключил
+
+
+def test_issue_table_keeps_main_columns_on_phone_and_hides_the_rest():
+    frame = pd.DataFrame([{"Важность": "высокая", "Работа": "Бетон", "Что не так": "x", "Источник": "act_1.xlsx"}])
+    html = c.html_table(frame, hide_on_mobile=("Что не так", "Источник"))
+    assert 'class="plain compact-m"' in html and html.count('class="hm"') == 4          # два заголовка и две ячейки
+    assert 'class="plain"' in c.html_table(frame) and "compact-m" not in c.html_table(frame)
+
+
+def test_site_declares_light_color_scheme_everywhere():
+    from ui import ledger
+    from ui.sheets_view import TEMPLATE
+    from ui.styles import CSS
+    assert "color-scheme: light" in CSS and "color-scheme: light" in TEMPLATE                  # сайт, таблица исходников
+    assert "color-scheme: light" in Path(ledger.__file__).read_text(encoding="utf-8")          # и таблица позиций (отдельный iframe)
+
+
+def test_ledger_status_is_a_dot_without_color_words_but_keeps_accessible_label():
+    from ui import ledger
+    source = Path(ledger.__file__).read_text(encoding="utf-8")
+    assert "esc(r.status_ru) + a" not in source                                          # слова «Красный», «Жёлтый» в ячейке не выводятся
+    assert "aria-label=\"' + esc(r.status_ru)" in source and "title=\"' + esc(r.status_ru)" in source
+
+
+def test_document_tabs_on_the_sources_page_are_always_visible():
+    from ui.sheets_view import TEMPLATE
+    assert 'id="tabs-handle"' not in TEMPLATE and 'class="tabs-label"' in TEMPLATE        # язычок «Наведите для выбора» убран
+    assert ".sheet-tabs-drawer {\n  position: relative;" in TEMPLATE and "translateY(100%)" in TEMPLATE.split("Вкладки документов всегда на виду")[0]
+    assert "revealActiveTab()" in TEMPLATE                                                 # активная вкладка прокручивается в видимую зону

@@ -24,6 +24,7 @@ TEMPLATE = r"""<!doctype html>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
 :root {
+  color-scheme: light;
   --bg-app: #f8f9fa;
   --bg-sheet: #ffffff;
   --grid-line: #e1e3e1;
@@ -561,6 +562,42 @@ td.sheet-cell.status-ai-matched::after {
   transform: rotate(180deg);
 }
 
+/* Вкладки документов всегда на виду внизу (не прячутся при наведении), на телефоне прокручиваются вбок */
+.sheet-tabs-drawer {
+  position: relative;
+  flex: none;
+  transform: none !important;
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border-top: 1px solid #d0d7de;
+  box-shadow: none !important;
+  z-index: 20;
+}
+.sheet-tabs-handle { display: none !important; }
+.tabs-label {
+  flex: none;
+  padding: 0 4px 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  white-space: nowrap;
+}
+.sheet-tabs-container {
+  flex: 1;
+  min-width: 0;
+  border-top: none;
+  box-shadow: none;
+  height: 46px;
+  scrollbar-width: thin;
+}
+.sheet-viewport { min-height: 0; }
+@media (max-width: 640px) {
+  .tabs-label { padding-left: 10px; }
+  .sheet-tabs-container { height: 52px; padding: 0 10px; }
+  .sheet-tab-button { height: 36px; font-size: 13px; }
+}
+
 /* 4. ИНТЕРАКТИВНЫЙ ПОПОВЕР РАСХОЖДЕНИЯ */
 .popover-card {
   position: fixed;
@@ -743,10 +780,7 @@ td.sheet-cell.status-ai-matched::after {
 
   <!-- ВСПЛЫВАЮЩАЯ НИЖНЯЯ ПАНЕЛЬ ВКЛАДОК (Hover Reveal) -->
   <div class="sheet-tabs-drawer" id="tabs-drawer">
-    <div class="sheet-tabs-handle" id="tabs-handle">
-      <span class="tabs-handle-caret">▲</span>
-      <span id="tabs-handle-text">Документы · Наведите для выбора</span>
-    </div>
+    <div class="tabs-label" id="tabs-label">Документы:</div>
     <div class="sheet-tabs-container" id="tabs-container"></div>
   </div>
 </div>
@@ -813,6 +847,14 @@ function renderTabs() {
     container.appendChild(btn);
   });
   updateTabsHandle();
+  revealActiveTab();
+}
+
+// Активная вкладка всегда в зоне видимости (на телефоне полоса вкладок прокручивается вбок)
+function revealActiveTab() {
+  const container = document.getElementById("tabs-container");
+  const active = container && container.querySelector(".sheet-tab-button.active");
+  if (active) container.scrollLeft = Math.max(0, container.scrollLeft + active.getBoundingClientRect().left - container.getBoundingClientRect().left - 16);
 }
 
 function updateTabsHandle() {
@@ -836,6 +878,7 @@ function switchSheet(docId, targetCellCoord = null) {
     btn.classList.toggle("active", btn.getAttribute("data-doc-id") === docId);
   });
   updateTabsHandle();
+  revealActiveTab();
   
   hidePopover();
   loadSheet(docId, targetCellCoord);

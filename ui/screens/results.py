@@ -90,7 +90,8 @@ def issues_tab(run: dict) -> None:
     frame = cards_frame(build_cards(chosen, positions))[TABLE_COLUMNS].copy()
     frame["Источник"] = frame["Источник"].str.replace(chr(10), "; ", regex=False)
     frame["Влияние, сом"] = frame["Влияние, сом"].map(lambda v: fmt_num(v) if pd.notna(v) else "—")
-    ui.render(ui.html_table(frame))
+    ui.render('<div class="note-small only-mobile">На телефоне показаны важность, работа и влияние. Тип, что не так, источник и пометки: вид «Карточки».</div>')
+    ui.render(ui.html_table(frame, hide_on_mobile=("Тип", "Что не так", "Источник", "Пометка")))
 
 
 def positions_tab(run: dict) -> None:

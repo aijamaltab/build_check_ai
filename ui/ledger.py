@@ -24,7 +24,7 @@ TEMPLATE = r"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-:root { --ink:#1B2733; --muted:#5B6877; --line:#D8DEE6; --bg:#F4F6F8; --accent:#1F4E79; --accent-soft:#E7EEF5; --red:#C62828; --yellow:#F9A825; --green:#2E7D32; }
+:root { color-scheme: light; --ink:#1B2733; --muted:#5B6877; --line:#D8DEE6; --bg:#F4F6F8; --accent:#1F4E79; --accent-soft:#E7EEF5; --red:#C62828; --yellow:#F9A825; --green:#2E7D32; }
 * { box-sizing: border-box; }
 html, body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.4 'IBM Plex Sans','Segoe UI',Arial,sans-serif; font-variant-numeric: tabular-nums; }
 body { padding: 2px 1px 12px 1px; }
@@ -144,7 +144,7 @@ td[data-tip] { cursor:help; }
   }
   function status(r) {
     var a = r.arrow === 'up' ? '<span class="arr" title="выше плана">▲</span>' : r.arrow === 'down' ? '<span class="arr" title="ниже плана">▼</span>' : '';
-    return '<span class="st"><span class="dot" style="background:' + P[r.status] + '"></span>' + esc(r.status_ru) + a + '</span>';
+    return '<span class="st" title="' + esc(r.status_ru) + '" aria-label="' + esc(r.status_ru) + '"><span class="dot" style="background:' + P[r.status] + '"></span>' + a + '</span>';
   }
   function cell(r, k) {
     var hl = r.hl[k], tip = r.tips[k];

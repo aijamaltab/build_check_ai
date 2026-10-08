@@ -283,16 +283,18 @@ def chain_html(examples: list) -> str:
     return f'<table class="chain"><thead><tr>{thead}</tr></thead><tbody>{body}</tbody></table>'
 
 
-def html_table(frame: pd.DataFrame, mark_false: bool = False) -> str:
+def html_table(frame: pd.DataFrame, mark_false: bool = False, hide_on_mobile: tuple = ()) -> str:
     """Таблица с переносом текста (st.dataframe режет длинные ячейки). Ячейки экранируются; на телефоне строки становятся блоками."""
     heads = list(frame.columns)
-    thead = "".join(f"<th>{escape(str(h))}</th>" for h in heads)
+    cls = "plain compact-m" if hide_on_mobile else "plain"       # compact-m: на телефоне остаётся таблицей, колонки hide_on_mobile скрыты
+    hm = lambda h: ' class="hm"' if h in hide_on_mobile else ""
+    thead = "".join(f"<th{hm(h)}>{escape(str(h))}</th>" for h in heads)
     rows = ""
     for _, r in frame.iterrows():
         bad = mark_false and str(r.get("По эталону", "")).startswith("ложное")
-        cells = "".join(f'<td data-label="{escape(str(h))}">{escape(str(r[h]))}</td>' for h in heads)
+        cells = "".join(f'<td{hm(h)} data-label="{escape(str(h))}">{escape(str(r[h]))}</td>' for h in heads)
         rows += f'<tr class="{"row-false" if bad else ""}">{cells}</tr>'
-    return f'<table class="plain"><thead><tr>{thead}</tr></thead><tbody>{rows}</tbody></table>'
+    return f'<table class="{cls}"><thead><tr>{thead}</tr></thead><tbody>{rows}</tbody></table>'
 
 
 def errors_html(examples: list) -> str:

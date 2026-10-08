@@ -212,7 +212,7 @@ def test_results_issues_table_view_has_readable_columns_and_filters(llm_env):
     assert not at.exception and [o for o in at.button_group(key="issues_view").options] == ["Таблица", "Карточки"]
     html = body(at)
     for head in ("Важность", "Тип", "Работа", "Что не так", "Влияние, сом", "Источник", "Пометка"):
-        assert f"<th>{head}</th>" in html                                                       # понятные заголовки колонок
+        assert f">{head}</th>" in html                                                          # понятные заголовки колонок (на телефоне часть скрыта классом hm)
     assert html.count('data-label="Работа"') == 13 and "act_2.xlsx" in html and "None" not in html.split("</style>")[-1]
     at.selectbox(key="flt_severity").select("высокая").run()
     rows = body(at).count('data-label="Работа"')
