@@ -9,9 +9,17 @@ from ui.llm_budget import session_budget, site_budget
 from ui.screens import blocks
 from ui.sets import SETS, zip_bytes
 
-HERO_TITLE = "Загрузка данных"
-HERO_LEAD = ("Загрузите ВОР, смету, договор и акты в формате Excel (.xlsx) или выберите готовый демо-набор: "
-             "система сопоставит документы и покажет возможные расхождения.")
+HERO_TITLE = "Сверка строительных документов"
+HERO_LEAD = ("Сервис сопоставляет плановую ведомость, смету, договор и акты и показывает возможные расхождения: где смотреть и сколько это в сомах. "
+             "Попробуйте на готовом примере или загрузите свои файлы.")
+STEPS = [("1. Выберите данные", "Нажмите на готовый демо-набор или загрузите свои Excel-файлы."),
+         ("2. Система сверяет", "ИИ понимает, что разные записи называют одну работу, а код считает объёмы и цены."),
+         ("3. Смотрите результат", "Список возможных расхождений: файл, лист, строка и влияние в сомах.")]
+GLOSSARY = ("ВОР (ведомость объёмов работ): план, какие работы и в каком объёме. Акт: что и сколько реально сделано. "
+            "Смета: цены. Договор: срок и сумма.")
+BASE_HINT = "  " + chr(10) + "Рекомендуем начать с него"
+FIRST_TIME = ("Впервые здесь? Нажмите «Посмотреть результат» у базового демо-набора ниже: ответы ИИ уже сохранены, ключ не нужен, "
+              "результат появится через несколько секунд. Данные синтетические.")
 LIVE_INFO = ("Новые названия, для которых нет сохранённого ответа, разбирает ИИ в реальном времени. "
              f"Лимиты: до {SESSION_LIMIT} запросов на сессию, до {SITE_DAILY_LIMIT} в сутки на весь сайт, не дольше 90 секунд на прогон.")
 OFFLINE_INFO = ("Ключ ИИ на этом сайте не настроен: используются только сохранённые ответы ИИ. "
@@ -87,19 +95,25 @@ def run_with_progress(label: str, results_page, *, files=None, set_name=None) ->
 
 
 def demo_block(results_page) -> None:
-    ui.render(ui.section_html("Демо-наборы", "Синтетические данные, девять файлов в каждом наборе. Ответы ИИ берутся из сохранённых, ключ не нужен. "
-                                             "Файлы можно скачать и загрузить выше: результат будет тем же."))
+    ui.render(ui.section_html("Попробуйте на демо-наборе", "Синтетические данные, девять файлов в каждом наборе. Ответы ИИ берутся из сохранённых, ключ не нужен. "
+                                                          "Набор можно скачать и затем загрузить ниже как свои файлы: результат будет тем же."))
     for name, title in SETS.items():
         with st.container(key=f"demo_{name}"):
             c1, c2, c3 = st.columns([3, 2, 2])
-            c1.markdown(f"**{title}**")
+            c1.markdown(f"**{title}**" + (BASE_HINT if name == "base" else ""))
             c2.download_button("Скачать набор (zip)", cached_zip(name), file_name=f"{name}.zip", mime="application/zip", key=f"zip_{name}")
-            if c3.button("Сверить на демо", key=f"run_{name}", type="primary" if name == "base" else "secondary"):
+            if c3.button("Посмотреть результат", key=f"run_{name}", type="primary" if name == "base" else "secondary"):
                 run_with_progress(title, results_page, set_name=name)
 
 
 def render(results_page=None) -> None:
     ui.render(ui.hero_html(HERO_TITLE, HERO_LEAD))
+    ui.render(ui.trio_html(STEPS))
+    ui.render(f'<div class="note-small">{ui.escape(GLOSSARY)}</div>')
+    st.success(FIRST_TIME)
+    demo_block(results_page)
+
+    ui.render(ui.section_html("Или загрузите свои файлы", "Нужны ВОР и хотя бы один акт; смета и договор необязательны."))
     live = bool(api_key())
     if live:
         st.warning(PRIVACY_WARNING)
@@ -143,5 +157,4 @@ def render(results_page=None) -> None:
         else:
             run_with_progress("загруженные файлы", results_page, files=[(f.name, bytes(f.getbuffer())) for f in chosen])
 
-    demo_block(results_page)
     blocks.footer()

@@ -98,9 +98,9 @@ def test_default_page_is_upload_with_uploaders_and_three_demo_sets(llm_env):
     at = run_app()
     assert not at.exception
     html = body(at)
-    assert "Загрузка данных" in html and "Демо-наборы" in html and "Данные синтетические" in page(at)
+    assert "Сверка строительных документов" in html and "Попробуйте на демо-наборе" in html and "Или загрузите свои файлы" in html and "Данные синтетические" in page(at)
     assert {u.key for u in at.file_uploader} == {"upload_vor", "upload_acts", "upload_estimate", "upload_contract"}
-    assert [b.key for b in at.button] == ["upload_run", "run_base", "run_set_3", "run_set_4"]
+    assert [b.key for b in at.button] == ["run_base", "run_set_3", "run_set_4", "upload_run"]       # демо выше загрузки своих файлов
     assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 3
     assert "Базовый набор" in html and "Набор 3" in html and "Набор 4" in html
     assert "Проект:</b> данные не загружены" in html and "Прогон:" not in html                    # шапка до первой сверки
