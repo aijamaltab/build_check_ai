@@ -58,8 +58,8 @@ td.c-name, th.c-name { white-space:normal; line-height:1.2; overflow-wrap:anywhe
 th.c-n, th.c-status, th.c-name { background:#EEF2F6; z-index:4; }
 td.c-n, td.c-status, td.c-name { z-index:1; }
 .c-n { left:0; width:40px; min-width:40px; max-width:40px; }
-.c-status { left:40px; width:112px; min-width:112px; max-width:112px; }
-.c-name { left:152px; width:190px; min-width:190px; max-width:190px; box-shadow:2px 0 0 #D8DEE6; }
+.c-status { left:40px; width:64px; min-width:64px; max-width:64px; padding:0 6px; }
+.c-name { left:104px; width:190px; min-width:190px; max-width:190px; box-shadow:2px 0 0 #D8DEE6; }
 td.c-name.hl-red { box-shadow: inset 0 0 0 1px #E8B4AF, 2px 0 0 #D8DEE6; }
 .hint { color:var(--accent); cursor:help; font-weight:400; }
 tr { cursor:pointer; }
@@ -68,7 +68,7 @@ tr.sel td { background:var(--accent-soft); }
 td.hl-red, tr:hover td.hl-red, tr.sel td.hl-red { background:#FDECEA; box-shadow: inset 0 0 0 1px #E8B4AF; }
 td.hl-yellow, tr:hover td.hl-yellow, tr.sel td.hl-yellow { background:#FFF6DB; box-shadow: inset 0 0 0 1px #EBCF8A; }
 td[data-tip] { cursor:help; }
-.st { display:inline-flex; align-items:center; gap:6px; font-weight:500; }
+.st { display:inline-flex; align-items:center; gap:4px; font-weight:500; }
 .dot { width:10px; height:10px; border-radius:50%; display:inline-block; flex:none; }
 .arr { font-size:11px; }
 .muted { color:var(--muted); }
@@ -96,7 +96,7 @@ td[data-tip] { cursor:help; }
   .mode-issues td { border:0; padding:3px 10px; text-align:left; }
   .mode-issues td::before { content:attr(data-label); display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
   .mode-issues td.i-n, .mode-issues td.i-type, .mode-issues td.i-name, .mode-issues td.i-impact, .mode-issues td.i-where { width:100%; }
- .c-n { width:32px; min-width:32px; max-width:32px; } .c-status { left:32px; width:100px; min-width:100px; max-width:100px; } .c-name { left:132px; width:120px; min-width:120px; max-width:120px; font-size:12px; } .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
+ .c-n { width:32px; min-width:32px; max-width:32px; } .c-status { left:32px; width:60px; min-width:60px; max-width:60px; } .c-name { left:92px; width:130px; min-width:130px; max-width:130px; font-size:12px; } .toolbar input[type=search] { width:100%; } .count { margin-left:0; width:100%; } }
 </style></head><body>
 <div class="panel toolbar" role="search">
   <input id="q" type="search" placeholder="Поиск по названию" aria-label="Поиск по названию">
