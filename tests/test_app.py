@@ -192,6 +192,8 @@ def test_results_have_no_duplicate_blocks(llm_env):
 
 def test_results_issues_tab_shows_cards_with_sources_and_filters(llm_env):
     at = AppTest.from_function(results_with_run_app, default_timeout=180).run()
+    assert at.button_group(key="issues_view").value == "Таблица" and cards(at) == 0         # по умолчанию таблица: её проще читать
+    at.button_group(key="issues_view").set_value("Карточки").run()
     assert cards(at) == 13 and len(at.get("iframe")) == 1                                           # карточки; таблица позиций это компонент
     html = body(at)
     assert "Показано 13 из 13" in html and html.count("issue-src") >= 13
@@ -205,6 +207,20 @@ def test_results_issues_tab_shows_cards_with_sources_and_filters(llm_env):
     assert cards(at) == 0 and any("нет" in i.value for i in at.info)
 
 
+def test_results_issues_table_view_has_readable_columns_and_filters(llm_env):
+    at = AppTest.from_function(results_with_run_app, default_timeout=180).run()
+    assert not at.exception and [o for o in at.button_group(key="issues_view").options] == ["Таблица", "Карточки"]
+    html = body(at)
+    for head in ("Важность", "Тип", "Работа", "Что не так", "Влияние, сом", "Источник", "Пометка"):
+        assert f"<th>{head}</th>" in html                                                       # понятные заголовки колонок
+    assert html.count('data-label="Работа"') == 13 and "act_2.xlsx" in html and "None" not in html.split("</style>")[-1]
+    at.selectbox(key="flt_severity").select("высокая").run()
+    rows = body(at).count('data-label="Работа"')
+    assert 0 < rows < 13 and f"Показано {rows} из 13" in body(at)
+    at.text_input(key="flt_query").input("такой работы нет").run()
+    assert 'data-label="Работа"' not in body(at) and any("нет" in i.value for i in at.info)
+
+
 def test_results_positions_tab_has_ledger_component(llm_env):
     at = demo_started()
     assert len(at.get("iframe")) == 1 and "Позиции со светофором" in body(at)
@@ -212,7 +228,8 @@ def test_results_positions_tab_has_ledger_component(llm_env):
 
 def test_topbar_shows_project_run_date_and_mode_after_run(llm_env):
     html = page(demo_started())
-    assert "Проект:" in html and "Базовый набор" in html and "Прогон:" in html and "Режим:" in html and "С ИИ (из кэша)" in html
+    assert "Проект:" in html and "Базовый набор" in html and "Режим:" in html and "С ИИ (из кэша)" in html
+    assert "Прогон:" not in html                                                         # дата прогона в шапке не показывается
 
 
 # ---------- «Исходные таблицы» ----------

@@ -6,7 +6,6 @@ import streamlit as st  # noqa: E402
 
 from ui import components as ui  # noqa: E402
 from ui import runner, sheets_view  # noqa: E402
-from ui.data import fmt_run_at  # noqa: E402
 from ui.screens import rationale, results, upload  # noqa: E402
 from ui.styles import inject  # noqa: E402
 
@@ -36,12 +35,12 @@ pages["rationale"] = st.Page(rationale.render, title="Как работает И
 
 
 def topbar() -> None:
-    """Узкая шапка над страницей: проект, дата прогона, режим (до первой сверки: «данные не загружены»)."""
+    """Узкая шапка над страницей: проект и режим (до первой сверки: «данные не загружены»)."""
     run = runner.current_run()
     if run is None:
         ui.render(ui.topbar_html("данные не загружены"))
         return
-    ui.render(ui.topbar_html(run["label"], fmt_run_at(run.get("run_at")), runner.mode_label(run)))
+    ui.render(ui.topbar_html(run["label"], mode=runner.mode_label(run)))
 
 
 topbar()

@@ -136,6 +136,8 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
 .plain td { vertical-align: top; padding: 7px 10px; border-bottom: 1px solid #E8ECF1; font-size: 0.88rem; line-height: 1.4; overflow-wrap: anywhere; }
 .plain tr:last-child td { border-bottom: 0; }
 .plain tr.row-false td { background: #FFF8E1; }
+.plain td[data-label="Тип"] { min-width: 120px; overflow-wrap: break-word; }
+.plain td[data-label="Важность"] { min-width: 80px; overflow-wrap: break-word; }
 .verdict.v-ok b { color: #1E5E22; }
 .verdict.v-no b { color: #5B6877; }
 .err-lead { font-size: 1rem; margin: 2px 0 8px 0; }

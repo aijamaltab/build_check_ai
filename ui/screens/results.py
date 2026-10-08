@@ -1,9 +1,11 @@
 """Страница «Результаты»: шапка и три вкладки (Сводка, Расхождения, Позиции) по последнему прогону сессии."""
+import pandas as pd
 import streamlit as st
 
 from ui import components as ui
 from ui import runner
-from ui.data import (SEVERITY_ORDER, SEVERITY_RU, TYPE_ORDER, TYPE_RU, build_cards, chart_frames, filter_issues, sort_issues)
+from ui.data import (SEVERITY_ORDER, SEVERITY_RU, TYPE_ORDER, TYPE_RU, build_cards, cards_frame, chart_frames, filter_issues, fmt_num,
+                     sort_issues)
 from ui.live_ai import describe_ai
 from ui.ledger_data import summary_points
 from ui.screens import blocks
@@ -14,6 +16,8 @@ HERO_TITLE = "Результаты сверки"
 CACHE_NOTE = "Результат собран из сохранённых ответов ИИ"
 MAX_CARDS = 50
 ALL = "Все"
+VIEW_TABLE, VIEW_CARDS = "Таблица", "Карточки"
+TABLE_COLUMNS = ["Важность", "Тип", "Работа", "Что не так", "Влияние, сом", "Источник", "Пометка"]
 
 
 def header(run: dict, upload_page, rationale_page) -> None:
@@ -73,12 +77,20 @@ def issues_tab(run: dict) -> None:
         query = st.text_input("Поиск по названию работы", key="flt_query")
     severity = next((s for s in SEVERITY_ORDER if SEVERITY_RU[s] == sev_label), "all")
     chosen = sort_issues(filter_issues(issues, positions, severity=severity, types=types, query=query))
-    ui.render(ui.section_html("Возможные расхождения", f"Показано {min(len(chosen), MAX_CARDS)} из {len(issues)}. "
+    view = ui.segmented("Вид", [VIEW_TABLE, VIEW_CARDS], VIEW_TABLE, key="issues_view")
+    shown = len(chosen) if view == VIEW_TABLE else min(len(chosen), MAX_CARDS)
+    ui.render(ui.section_html("Возможные расхождения", f"Показано {shown} из {len(issues)}. "
                                                        "Сначала высокая важность, внутри по влиянию на бюджет. Каждое требует проверки специалистом."))
     if chosen.empty:
         st.info("По выбранным фильтрам расхождений нет.")
         return
-    ui.render(ui.cards_html(build_cards(chosen.head(MAX_CARDS), positions)))
+    if view == VIEW_CARDS:
+        ui.render(ui.cards_html(build_cards(chosen.head(MAX_CARDS), positions)))
+        return
+    frame = cards_frame(build_cards(chosen, positions))[TABLE_COLUMNS].copy()
+    frame["Источник"] = frame["Источник"].str.replace(chr(10), "; ", regex=False)
+    frame["Влияние, сом"] = frame["Влияние, сом"].map(lambda v: fmt_num(v) if pd.notna(v) else "—")
+    ui.render(ui.html_table(frame))
 
 
 def positions_tab(run: dict) -> None:
