@@ -1211,16 +1211,17 @@ def render(upload_page=None) -> None:
             pointer-events: auto !important;
             z-index: 10001 !important;
             position: fixed !important;
-            top: 5px !important;
+            top: 4px !important;
             left: 8px !important;
-            height: 28px !important;
-            padding: 0 12px 0 6px !important;
+            height: 30px !important;
+            margin: 0 !important;
+            padding: 0 14px 0 12px !important;
         }
 
         /* Верхняя видимая панель фиксированной высоты 38px с отступом слева под кнопку «Меню» */
         .topbar {
             margin: 0 !important;
-            padding: 6px 14px 6px 112px !important;
+            padding: 6px 14px 6px 120px !important;
             border-radius: 0 !important;
             border-left: none !important;
             border-right: none !important;
@@ -1234,7 +1235,7 @@ def render(upload_page=None) -> None:
 
         /* На телефоне в полосе помещается только название проекта: одна строка, лишнее обрезается, режим скрыт */
         @media (max-width: 640px) {
-            .topbar { padding-left: 106px !important; overflow: hidden !important; flex-wrap: nowrap !important; }
+            .topbar { padding-left: 116px !important; overflow: hidden !important; flex-wrap: nowrap !important; }
             .topbar-item { white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
             .topbar-item:nth-child(n+2) { display: none !important; }
         }

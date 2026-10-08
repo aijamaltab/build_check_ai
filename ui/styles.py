@@ -11,7 +11,7 @@ CSS = FONT_IMPORT + """
         --sans: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif; }
 html, body, .stApp, .stApp :is(p, span, div, label, a, li, button, input, textarea, select, h1, h2, h3, h4):not([data-testid="stIconMaterial"], [data-testid="stIconMaterial"] *) { font-family: var(--sans); }
 .stApp { background: var(--bg); color: var(--ink); font-variant-numeric: tabular-nums; }
-.block-container { max-width: 1240px; padding-top: 3.6rem; padding-bottom: 2.5rem; }
+.block-container { max-width: 1240px; padding-top: 4rem; padding-bottom: 2.5rem; }
 [data-testid="stHeader"] { background: transparent; }
 #MainMenu, footer { visibility: hidden; }
 [data-testid="stSidebar"] { background: #fff; border-right: 1px solid var(--line); }
@@ -21,14 +21,16 @@ h1, h2, h3, .hero-title, .section-title { font-family: var(--sans); color: var(-
 .topbar { display: flex; flex-wrap: wrap; gap: 4px 22px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
           padding: 7px 12px; margin: 0 0 12px 0; font-size: 0.84rem; color: var(--muted); }
 .topbar b { color: var(--ink); font-weight: 600; }
-/* Кнопка открытия меню страниц: яркая, с подписью «Меню» и короткой пульсацией (3 раза), чтобы новички её замечали */
-[data-testid="stExpandSidebarButton"] { width: auto !important; height: 38px !important; padding: 0 16px 0 10px !important; gap: 4px; border-radius: 20px !important;
-        background: var(--accent) !important; color: #fff !important; box-shadow: 0 2px 8px rgba(31, 78, 121, 0.35); cursor: pointer;
-        animation: nav-pulse 1.8s ease-out 3; }
-[data-testid="stExpandSidebarButton"]::after { content: "Меню"; font-size: 0.92rem; font-weight: 600; color: #fff; }
-[data-testid="stExpandSidebarButton"] span, [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] { color: #fff !important; }
-[data-testid="stExpandSidebarButton"]:hover { background: #17405F !important; }
-@keyframes nav-pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0.6); } 70% { box-shadow: 0 0 0 16px rgba(31, 78, 121, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0); } }
+/* Кнопка открытия меню страниц: светлая капсула с акцентной рамкой, значок-«гамбургер» и подпись «Меню»; три мягких пульсации при заходе */
+[data-testid="stExpandSidebarButton"] { width: auto !important; height: 34px !important; margin: 8px 0 0 10px !important; padding: 0 16px 0 14px !important; gap: 10px;
+        border-radius: 17px !important; background: #fff !important; border: 1.5px solid var(--accent) !important; color: var(--accent) !important;
+        box-shadow: 0 1px 4px rgba(31, 78, 121, 0.18); cursor: pointer; animation: nav-pulse 1.8s ease-out 3; }
+[data-testid="stExpandSidebarButton"] > span { display: none !important; }
+[data-testid="stExpandSidebarButton"]::before { content: ""; width: 16px; height: 2px; border-radius: 1px; background: currentColor;
+        box-shadow: 0 -5px 0 currentColor, 0 5px 0 currentColor; }
+[data-testid="stExpandSidebarButton"]::after { content: "Меню"; font-size: 0.86rem; font-weight: 500; letter-spacing: 0.03em; color: currentColor; }
+[data-testid="stExpandSidebarButton"]:hover { background: var(--accent) !important; color: #fff !important; }
+@keyframes nav-pulse { 0% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0.45); } 70% { box-shadow: 0 0 0 12px rgba(31, 78, 121, 0); } 100% { box-shadow: 0 0 0 0 rgba(31, 78, 121, 0); } }
 @media (prefers-reduced-motion: reduce) { [data-testid="stExpandSidebarButton"] { animation: none; } }
 .hero { padding: 0 0 4px 0; }
 .hero-title { font-size: 1.5rem; line-height: 1.25; font-weight: 600; margin: 4px 0 4px 0; }
