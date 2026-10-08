@@ -186,7 +186,7 @@ def test_page_with_key_shows_privacy_warning_and_limits(live_env):
     assert not at.exception
     assert any("обезличенные документы, без коммерческой тайны: названия работ из них отправляются во внешний сервис ИИ (Gemini). Демо-наборы никуда не отправляются"
                in w.value for w in at.warning)
-    assert any("разбирает ИИ в реальном времени" in i.value and "25 запросов на сессию" in i.value and "150 в сутки" in i.value for i in at.info)
+    assert not any("запросов на сессию" in i.value for i in at.info)                 # лимиты на странице не показываются, они действуют в коде (ui/live_ai.py)
     assert KEY not in page_text(at)
 
 

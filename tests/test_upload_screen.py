@@ -37,7 +37,7 @@ def test_upload_page_initial_render(llm_env):
     assert "Сверка строительных документов" in html
     assert sum("Живой ИИ на этом сайте сейчас выключен" in i.value for i in at.info) == 1       # без ключа: честное сообщение, один блок
     assert not at.warning                                                                  # предупреждение о внешнем сервисе только при живом ИИ
-    assert "Попробуйте на демо-наборе" in html and "Синтетические данные" in html
+    assert "Попробуйте на демо-наборе" in html and "Данные синтетические" in html
     assert [d.label for d in at.download_button] == ["Скачать набор (zip)"] * 3
     assert [b.label for b in at.button] == ["Посмотреть результат"] * 3 + ["Сверить"]
     assert len(at.file_uploader) == 4    # vor, акты, смета, договор

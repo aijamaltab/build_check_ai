@@ -4,7 +4,7 @@ import streamlit as st
 
 from ui import components as ui
 from ui import runner
-from ui.live_ai import MAX_FILE_MB, MAX_FILES, PRIVACY_WARNING, SESSION_LIMIT, SITE_DAILY_LIMIT, get_api_key, scrub
+from ui.live_ai import MAX_FILE_MB, MAX_FILES, PRIVACY_WARNING, get_api_key, scrub
 from ui.llm_budget import session_budget, site_budget
 from ui.screens import blocks
 from ui.sets import SETS, zip_bytes
@@ -20,8 +20,6 @@ GLOSSARY = ("ВОР (ведомость объёмов работ): план, к
 BASE_HINT = "  " + chr(10) + "Рекомендуем начать с него"
 FIRST_TIME = ("Впервые здесь? Нажмите «Посмотреть результат» у базового демо-набора ниже: ответы ИИ уже сохранены, ключ не нужен, "
               "результат появится через несколько секунд. Данные синтетические.")
-LIVE_INFO = ("Названия работ, которых система ещё не видела, разбирает ИИ в реальном времени. "
-             f"Лимиты: до {SESSION_LIMIT} запросов на сессию, до {SITE_DAILY_LIMIT} в сутки на весь сайт, не дольше 90 секунд на прогон.")
 OFFLINE_INFO = ("Живой ИИ на этом сайте сейчас выключен: используются только сохранённые ответы. "
                 "Для незнакомых названий работ ответов нет, такие позиции могут быть сопоставлены неверно и требуют проверки.")
 NOT_RECOGNIZED = ("Загруженные файлы не были распознаны. Убедитесь, что они сохранены в формате .xlsx и содержат строки заголовков "
@@ -95,8 +93,7 @@ def run_with_progress(label: str, results_page, *, files=None, set_name=None) ->
 
 
 def demo_block(results_page) -> None:
-    ui.render(ui.section_html("Попробуйте на демо-наборе", "Синтетические данные, девять файлов в каждом наборе. Ответы ИИ берутся из сохранённых, ключ не нужен. "
-                                                          "Набор можно скачать и затем загрузить ниже как свои файлы: результат будет тем же."))
+    ui.render(ui.section_html("Попробуйте на демо-наборе"))
     for name, title in SETS.items():
         with st.container(key=f"demo_{name}"):
             c1, c2, c3 = st.columns([3, 2, 2])
@@ -117,7 +114,6 @@ def render(results_page=None) -> None:
     live = bool(api_key())
     if live:
         st.warning(PRIVACY_WARNING)
-        st.info(LIVE_INFO)
     else:
         st.info(OFFLINE_INFO)
 
